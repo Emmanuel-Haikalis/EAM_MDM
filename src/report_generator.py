@@ -120,6 +120,33 @@ def generate_summary(
     if data_quality:
         summary["data_quality"] = data_quality
 
+    # --- ML stats (only when ML-mode columns are present) ---
+    if "embedding_score" in results_df.columns:
+        top1_ml = top1.copy()
+        mismatch_count = int(
+            top1_ml["category_mismatch_flag"]
+            .apply(lambda x: str(x).lower() == "true")
+            .sum()
+        )
+        embed_vals = pd.to_numeric(top1_ml["embedding_score"], errors="coerce").dropna()
+        avg_embed = round(float(embed_vals.mean()), 1) if not embed_vals.empty else 0.0
+        domain_dist = (
+            top1_ml["failure_domain"]
+            .replace("", pd.NA)
+            .dropna()
+            .value_counts()
+            .to_dict()
+        )
+        vote_agree = int(
+            (top1_ml["cross_system_category_vote"] == "majority_agree").sum()
+        )
+        summary["ml_stats"] = {
+            "avg_embedding_score_top1": avg_embed,
+            "category_mismatch_count": mismatch_count,
+            "cross_system_vote_agreement_count": vote_agree,
+            "failure_domain_distribution": domain_dist,
+        }
+
     return summary
 
 
@@ -191,6 +218,20 @@ def save_summary(
         if dq.get("duplicate_asset_ids"):
             for aid in dq["duplicate_asset_ids"]:
                 lines.append(f"      duplicate: {aid}")
+        lines.append("")
+
+    # ML stats
+    if "ml_stats" in summary:
+        ml = summary["ml_stats"]
+        lines += [
+            "  ML STATS",
+            f"    Avg embedding score (top-1) : {ml['avg_embedding_score_top1']}",
+            f"    Category mismatches         : {ml['category_mismatch_count']}",
+            f"    Cross-system vote agree     : {ml['cross_system_vote_agreement_count']}",
+            "    Failure domain distribution :",
+        ]
+        for domain, count in ml.get("failure_domain_distribution", {}).items():
+            lines.append(f"      {domain:<30}: {count}")
         lines.append("")
 
     lines.append("=" * 62)

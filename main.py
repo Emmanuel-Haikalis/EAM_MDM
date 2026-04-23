@@ -69,6 +69,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Top N candidates per asset per system (default: 3)")
     p.add_argument("--generate-templates", action="store_true", dest="generate_templates",
                    help="Write blank CSV templates to --output dir and exit")
+    p.add_argument(
+        "--mode",
+        choices=["fast", "ml"],
+        default="fast",
+        dest="mode",
+        help=(
+            "Scoring mode: 'fast' (TF-IDF + Jaccard, default) or 'ml' "
+            "(adds sentence-transformer embeddings, two-stage recursive "
+            "filtering, cross-register equivalence, and failure mode "
+            "alignment — takes longer). "
+            "ML mode requires: pip install sentence-transformers"
+        ),
+    )
     return p
 
 
@@ -127,9 +140,17 @@ def main() -> int:
 
     # ── Classify ─────────────────────────────────────────────────────────────
     print(f"\n{SEP}")
-    print("  Running classification …")
+    if args.mode == "ml":
+        print("  Running ML classification …")
+        print("  (embeddings + two-stage + cross-register + failure alignment)")
+    else:
+        print("  Running classification …")
     print(SEP)
-    results_df = classify_all(asset_df, classification_tables, top_n=args.top_n)
+    if args.mode == "ml":
+        from src.classifier_ml import classify_all_ml
+        results_df = classify_all_ml(asset_df, classification_tables, top_n=args.top_n)
+    else:
+        results_df = classify_all(asset_df, classification_tables, top_n=args.top_n)
     print(f"\n  {len(results_df)} result records generated")
 
     # ── Save outputs ─────────────────────────────────────────────────────────
