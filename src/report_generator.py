@@ -11,6 +11,8 @@ try:
     from .ml_engine import _CODE_TO_DOMAIN as _DOMAIN_MAP
 except ImportError:
     _DOMAIN_MAP: Dict[str, str] = {}
+from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -20,6 +22,45 @@ _FILL_MED  = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="so
 _FILL_LOW  = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 _FLAG_FILL = {"high": _FILL_HIGH, "medium": _FILL_MED, "low": _FILL_LOW}
 _BOLD = Font(bold=True)
+
+# Threshold above which write-only (streaming) Excel mode is used to avoid OOM
+_STREAMING_THRESHOLD = 50_000
+
+
+def _write_excel_streaming(results_df: pd.DataFrame, xlsx_path: str) -> None:
+    """Write results to Excel using openpyxl write-only (streaming) mode.
+
+    Suitable for large DataFrames (50k+ rows) where building the full workbook
+    in memory would cause OOM.  Applies row colour coding via WriteOnlyCell.
+    """
+    cols = list(results_df.columns)
+    # Locate confidence_flag column for row colouring
+    flag_idx = cols.index("confidence_flag") if "confidence_flag" in cols else None
+
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet("Classification Results")
+
+    # Header row
+    header_cells = []
+    for col_name in cols:
+        cell = WriteOnlyCell(ws, value=col_name)
+        cell.font = _BOLD
+        header_cells.append(cell)
+    ws.append(header_cells)
+
+    # Data rows with colour coding
+    for row_tuple in results_df.itertuples(index=False):
+        flag_val = str(row_tuple[flag_idx]).lower() if flag_idx is not None else ""
+        fill = _FLAG_FILL.get(flag_val)
+        row_cells = []
+        for val in row_tuple:
+            cell = WriteOnlyCell(ws, value=val)
+            if fill:
+                cell.fill = fill
+            row_cells.append(cell)
+        ws.append(row_cells)
+
+    wb.save(xlsx_path)
 
 
 def save_results(
@@ -35,36 +76,37 @@ def save_results(
 
     results_df.to_csv(csv_path, index=False)
 
-    with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
-        results_df.to_excel(writer, sheet_name="Classification Results", index=False)
-        ws = writer.sheets["Classification Results"]
+    if len(results_df) > _STREAMING_THRESHOLD:
+        # Streaming mode: memory-efficient for large registers
+        _write_excel_streaming(results_df, str(xlsx_path))
+    else:
+        # Standard mode: full formatting (auto-width columns, freeze panes, filters)
+        with pd.ExcelWriter(xlsx_path, engine="openpyxl") as writer:
+            results_df.to_excel(writer, sheet_name="Classification Results", index=False)
+            ws = writer.sheets["Classification Results"]
 
-        # --- Header styling ---
-        for cell in ws[1]:
-            cell.font = _BOLD
-        ws.freeze_panes = "A2"
-        ws.auto_filter.ref = ws.dimensions
+            for cell in ws[1]:
+                cell.font = _BOLD
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
 
-        # --- Column widths ---
-        for col_cells in ws.columns:
-            max_len = max((len(str(cell.value or "")) for cell in col_cells), default=10)
-            ws.column_dimensions[col_cells[0].column_letter].width = min(max_len + 2, 55)
+            for col_cells in ws.columns:
+                max_len = max((len(str(cell.value or "")) for cell in col_cells), default=10)
+                ws.column_dimensions[col_cells[0].column_letter].width = min(max_len + 2, 55)
 
-        # --- Confidence-flag row colouring ---
-        # Find the confidence_flag column index dynamically
-        flag_col_idx = None
-        for cell in ws[1]:
-            if str(cell.value).lower() == "confidence_flag":
-                flag_col_idx = cell.column
-                break
+            flag_col_idx = None
+            for cell in ws[1]:
+                if str(cell.value).lower() == "confidence_flag":
+                    flag_col_idx = cell.column
+                    break
 
-        if flag_col_idx is not None:
-            for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-                flag_val = str(row[flag_col_idx - 1].value or "").lower()
-                fill = _FLAG_FILL.get(flag_val)
-                if fill:
-                    for cell in row:
-                        cell.fill = fill
+            if flag_col_idx is not None:
+                for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                    flag_val = str(row[flag_col_idx - 1].value or "").lower()
+                    fill = _FLAG_FILL.get(flag_val)
+                    if fill:
+                        for cell in row:
+                            cell.fill = fill
 
     return {"csv": str(csv_path), "excel": str(xlsx_path)}
 

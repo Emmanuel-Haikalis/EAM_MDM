@@ -21,11 +21,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from .config_loader import load_config as _load_config
+
 # ---------------------------------------------------------------------------
 # Failure mode vocabulary — ISO 14224 / RCM-aligned, 13 domains
+# Loaded from config/failure_vocab.yaml; falls back to hardcoded dict.
 # ---------------------------------------------------------------------------
 
-_FAILURE_VOCAB: Dict[str, Dict[str, Any]] = {
+_FAILURE_VOCAB_BUILTIN: Dict[str, Dict[str, Any]] = {
     "bridge_structures": {
         "iso_14224_class": "Civil Structures – Load-bearing",
         "category_keywords": [
@@ -278,9 +281,10 @@ _FAILURE_VOCAB: Dict[str, Dict[str, Any]] = {
 
 # ---------------------------------------------------------------------------
 # Code-to-domain mapping — all 66 codes across UNICLASS, AUSTROADS, TfNSW
+# Loaded from config/code_to_domain.yaml; falls back to hardcoded dict.
 # ---------------------------------------------------------------------------
 
-_CODE_TO_DOMAIN: Dict[str, str] = {
+_CODE_TO_DOMAIN_BUILTIN: Dict[str, str] = {
     # UNICLASS (22 codes)
     "Ss_25_10_30": "pavement",
     "Ss_25_10_37": "pavement",
@@ -351,6 +355,10 @@ _CODE_TO_DOMAIN: Dict[str, str] = {
     "TfNSW-UTL-001": "water_supply",
     "TfNSW-UTL-002": "its_cctv",
 }
+
+# Load from YAML config; fall back to builtins if config absent
+_FAILURE_VOCAB: Dict[str, Dict[str, Any]] = _load_config("failure_vocab") or _FAILURE_VOCAB_BUILTIN
+_CODE_TO_DOMAIN: Dict[str, str] = _load_config("code_to_domain") or _CODE_TO_DOMAIN_BUILTIN
 
 
 # ---------------------------------------------------------------------------

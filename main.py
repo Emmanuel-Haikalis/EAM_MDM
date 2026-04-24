@@ -82,6 +82,18 @@ def build_parser() -> argparse.ArgumentParser:
             "ML mode requires: pip install sentence-transformers"
         ),
     )
+    p.add_argument(
+        "--cache-dir",
+        default=None,
+        metavar="DIR",
+        dest="cache_dir",
+        help=(
+            "Directory for caching fitted TF-IDF and embedding matrices. "
+            "On first run matrices are saved here; on subsequent runs with "
+            "the same classification tables they are loaded from cache, "
+            "skipping the fit step. Cache is invalidated when tables change."
+        ),
+    )
     return p
 
 
@@ -153,7 +165,8 @@ def main() -> int:
         from src.classifier_ml import classify_all_ml
         results_df = classify_all_ml(asset_df, classification_tables, top_n=args.top_n)
     else:
-        results_df = classify_all(asset_df, classification_tables, top_n=args.top_n)
+        results_df = classify_all(asset_df, classification_tables, top_n=args.top_n,
+                                  cache_dir=args.cache_dir)
     print(f"\n  {len(results_df)} result records generated")
 
     # ── Save outputs ─────────────────────────────────────────────────────────

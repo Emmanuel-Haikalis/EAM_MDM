@@ -1,0 +1,22 @@
+# Domain acronym expansions applied during text preprocessing.
+# Applied to BOTH asset text and classification text for consistency.
+# Format: acronym: "full expansion phrase"
+
+cctv:   "closed circuit television camera surveillance"
+ptz:    "pan tilt zoom camera"
+vms:    "variable message sign display board"
+scats:  "traffic signal control adaptive system intersection"
+bms:    "building management system control automation"
+tmc:    "traffic management centre monitoring operations"
+hps:    "high pressure sodium lamp luminaire street lighting"
+dn:     "diameter nominal pipe bore"
+rc:     "reinforced concrete structure"
+ac:     "asphalt concrete bituminous pavement surfacing"
+dgb:    "dense graded base granular pavement subbase"
+led:    "light emitting diode luminaire energy efficient"
+its:    "intelligent transport system technology"
+scada:  "supervisory control data acquisition automation"
+rms:    "roads maritime services transport authority"
+anpr:   "automatic number plate recognition camera"
+vds:    "vehicle detection system loop radar"
+atms:   "advanced traffic management system"

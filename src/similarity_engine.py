@@ -5,6 +5,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Optional, Tuple
 
+from .config_loader import load_config
+
 # Minimal stop-word list: only remove truly generic connective words so that
 # technical domain terms (road, bridge, tunnel, pipe…) keep their IDF weight.
 _STOP_WORDS = frozenset(
@@ -14,28 +16,17 @@ _STOP_WORDS = frozenset(
     "when which who what how where".split()
 )
 
-# Domain acronyms common in EAM asset descriptions that should be expanded
-# to their full technical phrases before TF-IDF matching.  Expansion is
-# applied to BOTH asset text and classification text for consistency.
-_EXPANSIONS = {
+# Domain acronyms loaded from config/acronyms.yaml.
+# Falls back to hardcoded dict if config is absent (e.g. during unit tests).
+_EXPANSIONS: dict = load_config("acronyms") or {
     "cctv":  "closed circuit television camera surveillance",
     "ptz":   "pan tilt zoom camera",
     "vms":   "variable message sign display board",
     "scats": "traffic signal control adaptive system intersection",
-    "bms":   "building management system control automation",
-    "tmc":   "traffic management centre monitoring operations",
-    "hps":   "high pressure sodium lamp luminaire street lighting",
-    "dn":    "diameter nominal pipe bore",
-    "rc":    "reinforced concrete structure",
-    "ac":    "asphalt concrete bituminous pavement surfacing",
-    "dgb":   "dense graded base granular pavement subbase",
     "led":   "light emitting diode luminaire energy efficient",
     "its":   "intelligent transport system technology",
     "scada": "supervisory control data acquisition automation",
-    "rms":   "roads maritime services transport authority",
     "anpr":  "automatic number plate recognition camera",
-    "vds":   "vehicle detection system loop radar",
-    "atms":  "advanced traffic management system",
 }
 
 # Pre-compile acronym pattern for efficiency (whole-word matches only)
@@ -54,7 +45,7 @@ def _expand_acronyms(text: str) -> str:
 
 def _clean(text: str) -> str:
     text = str(text).lower()
-    text = _expand_acronyms(text)                   # O2: expand EAM acronyms
+    text = _expand_acronyms(text)
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -78,14 +69,12 @@ def build_asset_text(row: pd.Series) -> str:
     mfr_model = str(row.get("manufacturer_model", "")).strip()
 
     parts: list[str] = []
-    # asset_type is the cleanest domain signal (structured field, no location noise)
-    # name gets ×2 not ×3 to reduce pollution from location tokens like "Main Street"
     if name:
         parts += [name] * 2
     if atype:
         parts += [atype] * 3
     if existing_cls:
-        parts += [existing_cls] * 2   # legacy classification is a strong domain prior
+        parts += [existing_cls] * 2
     if desc:
         parts.append(desc)
     if specs:
@@ -125,6 +114,9 @@ class SimilarityEngine:
     Score = 0.50 × TF-IDF(full_text)  [Component A — semantic overlap]
           + 0.25 × TF-IDF(category)   [Component B — domain hierarchy]
           + 0.25 × Jaccard(keywords)  [Component C — term precision]
+
+    score_batch() processes N assets in one vectorized pass — preferred for
+    large registers (50k+).  score_raw() remains available for single-asset use.
     """
 
     def __init__(self) -> None:
@@ -140,29 +132,41 @@ class SimilarityEngine:
         self._cat_matrix = None
         self._class_term_sets: list[frozenset] = []
         self._n_classes = 0
+        # Precomputed binary term matrix for vectorized Jaccard (set at fit time)
+        self._jaccard_vocab: list[str] = []
+        self._jaccard_matrix: Optional[np.ndarray] = None  # (M, V_j) bool
 
     def fit(
         self,
         classification_texts: List[str],
         category_texts: Optional[List[str]] = None,
     ) -> None:
-        """Fit the hybrid engine on classification descriptions and categories.
-
-        Parameters
-        ----------
-        classification_texts : full concatenated text per classification entry
-        category_texts       : category+subcategory strings; if omitted, Component B
-                               contributes zero and weights redistribute to A and C.
-        """
+        """Fit the hybrid engine on classification descriptions and categories."""
         self._n_classes = len(classification_texts)
         cleaned_full = [_clean(t) for t in classification_texts]
 
         self._full_matrix = self._full_vec.fit_transform(cleaned_full)
         self._class_term_sets = [_term_set(t) for t in classification_texts]
 
+        # Precompute Jaccard binary matrix for batch scoring
+        all_terms = sorted(set().union(*self._class_term_sets))
+        self._jaccard_vocab = all_terms
+        if all_terms:
+            vocab_idx = {w: j for j, w in enumerate(all_terms)}
+            jmat = np.zeros((self._n_classes, len(all_terms)), dtype=np.float32)
+            for i, term_set in enumerate(self._class_term_sets):
+                for w in term_set:
+                    j = vocab_idx.get(w)
+                    if j is not None:
+                        jmat[i, j] = 1.0
+            self._jaccard_matrix = jmat
+            self._jaccard_vocab_idx = vocab_idx
+        else:
+            self._jaccard_matrix = None
+            self._jaccard_vocab_idx = {}
+
         if category_texts and len(category_texts) == len(classification_texts):
             cleaned_cats = [_clean(t) for t in category_texts]
-            # Guard against degenerate empty-corpus case
             non_empty = [t for t in cleaned_cats if t.strip()]
             if non_empty:
                 self._cat_matrix = self._cat_vec.fit_transform(cleaned_cats)
@@ -171,12 +175,85 @@ class SimilarityEngine:
         else:
             self._cat_matrix = None
 
+    def _compute_jaccard_batch(self, asset_term_sets: List[frozenset]) -> np.ndarray:
+        """Compute Jaccard scores for N assets vs M classifications.
+
+        Returns (N, M) float32 array in [0, 100].
+        """
+        N = len(asset_term_sets)
+        M = self._n_classes
+        if self._jaccard_matrix is None or M == 0:
+            return np.zeros((N, M), dtype=np.float32)
+
+        V = len(self._jaccard_vocab)
+        # Build (N, V) asset binary matrix
+        asset_mat = np.zeros((N, V), dtype=np.float32)
+        for i, terms in enumerate(asset_term_sets):
+            for w in terms:
+                j = self._jaccard_vocab_idx.get(w)
+                if j is not None:
+                    asset_mat[i, j] = 1.0
+
+        # Intersection = (N, V) @ (V, M) = (N, M)
+        intersection = asset_mat @ self._jaccard_matrix.T  # (N, M)
+        asset_counts = asset_mat.sum(axis=1, keepdims=True)          # (N, 1)
+        class_counts = self._jaccard_matrix.sum(axis=1, keepdims=False)  # (M,)
+        union = asset_counts + class_counts - intersection            # (N, M)
+        c_mat = np.where(union > 0, intersection / union * 100, 0.0)
+        return c_mat.astype(np.float32)
+
+    def score_batch(
+        self, asset_texts: List[str]
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Score N assets against all M classifications in one vectorized pass.
+
+        Returns (hybrid, A, B, C) as (N, M) float32 arrays in [0, 100].
+        Use this instead of calling score_raw() in a loop for large registers.
+        """
+        N = len(asset_texts)
+        M = self._n_classes
+
+        if M == 0 or self._full_matrix is None:
+            z = np.zeros((N, M), dtype=np.float32)
+            return z, z, z, z
+
+        cleaned = [_clean(t) for t in asset_texts]
+
+        # Component A — full-text TF-IDF cosine (N, M)
+        query_mat = self._full_vec.transform(cleaned)       # (N, V)
+        raw_a = cosine_similarity(query_mat, self._full_matrix)  # (N, M)
+        a_mat = np.nan_to_num(raw_a, nan=0.0).astype(np.float32) * 100
+
+        # Component B — category TF-IDF cosine (N, M)
+        if self._cat_matrix is not None:
+            try:
+                cat_query = self._cat_vec.transform(cleaned)
+                raw_b = cosine_similarity(cat_query, self._cat_matrix)
+                b_mat = np.nan_to_num(raw_b, nan=0.0).astype(np.float32) * 100
+            except Exception:
+                b_mat = np.zeros((N, M), dtype=np.float32)
+        else:
+            b_mat = np.zeros((N, M), dtype=np.float32)
+
+        # Component C — vectorized Jaccard (N, M)
+        asset_term_sets = [_term_set(t) for t in asset_texts]
+        c_mat = self._compute_jaccard_batch(asset_term_sets)
+
+        # Weighted hybrid
+        if self._cat_matrix is not None:
+            hybrid = (0.50 * a_mat + 0.25 * b_mat + 0.25 * c_mat)
+        else:
+            hybrid = (0.625 * a_mat + 0.375 * c_mat)
+
+        return np.round(hybrid, 1), a_mat, b_mat, c_mat
+
     def score_raw(
         self, asset_text: str, top_n: int = 3
     ) -> List[Tuple[int, float, float, float, float]]:
         """Return uncalibrated (idx, hybrid, A, B, C) tuples for top-N matches.
 
         Scores are in 0–100 range before calibration.
+        For large-scale use, prefer score_batch() over calling this in a loop.
         """
         n = min(top_n, self._n_classes)
         cleaned = _clean(asset_text)
@@ -188,11 +265,11 @@ class SimilarityEngine:
         if query_vec.nnz == 0:
             return [(i, 0.0, 0.0, 0.0, 0.0) for i in range(n)]
 
-        # Component A — full-text TF-IDF cosine
+        # Component A
         raw_a = cosine_similarity(query_vec, self._full_matrix).flatten()
         a_scores = np.nan_to_num(raw_a, nan=0.0) * 100
 
-        # Component B — category TF-IDF cosine
+        # Component B
         if self._cat_matrix is not None:
             try:
                 cat_vec = self._cat_vec.transform([cleaned])
@@ -203,7 +280,7 @@ class SimilarityEngine:
         else:
             b_scores = np.zeros(self._n_classes)
 
-        # Component C — Keyword Jaccard overlap
+        # Component C
         asset_terms = _term_set(asset_text)
         c_scores = np.zeros(self._n_classes)
         if asset_terms:
@@ -212,11 +289,9 @@ class SimilarityEngine:
                 if union:
                     c_scores[i] = len(asset_terms & cls_terms) / len(union) * 100
 
-        # Weighted hybrid
         if self._cat_matrix is not None:
             hybrid = 0.50 * a_scores + 0.25 * b_scores + 0.25 * c_scores
         else:
-            # Redistribute category weight to A and C when category data absent
             hybrid = 0.625 * a_scores + 0.375 * c_scores
 
         hybrid = np.round(hybrid, 1)

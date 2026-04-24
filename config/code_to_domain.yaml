@@ -1,0 +1,75 @@
+# Classification code → failure domain key mapping.
+# All 66 codes across UNICLASS, AUSTROADS, and TfNSW systems.
+# To add a new classification system: append its codes here.
+
+# UNICLASS (22 codes)
+Ss_25_10_30: pavement
+Ss_25_10_37: pavement
+Ss_25_10_38: pavement
+Ss_25_10_50: pavement
+Ss_25_13_15: bridge_structures
+Ss_25_13_20: drainage
+Ss_25_13_50: bridge_structures
+Ss_25_13_75: retaining_structures
+Ss_25_14_15: traffic_control
+Ss_25_14_30: variable_message_sign
+Ss_25_14_60: road_safety
+Ss_25_14_70: its_cctv
+Ss_25_16_40: lighting
+Ss_25_16_50: tunnel
+Ss_25_16_57: its_cctv
+Ss_25_30_10: drainage
+Ss_25_30_15: pump_station
+Ss_25_30_20: drainage
+Ss_25_50_15: pavement
+Ss_25_60_25: retaining_structures
+Ss_70_30_10: passenger_facilities
+Ss_80_90_20: water_supply
+
+# AUSTROADS (22 codes)
+ASTR-BRG-110: bridge_structures
+ASTR-BRG-120: drainage
+ASTR-BRG-130: bridge_structures
+ASTR-PAV-210: pavement
+ASTR-PAV-220: pavement
+ASTR-PAV-230: pavement
+ASTR-DRN-310: drainage
+ASTR-DRN-320: drainage
+ASTR-DRN-330: pump_station
+ASTR-DRN-340: drainage
+ASTR-TMG-410: traffic_control
+ASTR-TMG-420: variable_message_sign
+ASTR-TMG-430: road_safety
+ASTR-TMG-440: traffic_control
+ASTR-LGT-500: lighting
+ASTR-STR-610: retaining_structures
+ASTR-TUN-700: tunnel
+ASTR-TUN-710: tunnel
+ASTR-ITS-810: its_cctv
+ASTR-ITS-820: its_cctv
+ASTR-PSG-910: passenger_facilities
+ASTR-UTL-960: water_supply
+
+# TfNSW (22 codes)
+TfNSW-STR-001: bridge_structures
+TfNSW-STR-002: bridge_structures
+TfNSW-STR-003: drainage
+TfNSW-STR-004: retaining_structures
+TfNSW-STR-005: tunnel
+TfNSW-PAV-001: pavement
+TfNSW-PAV-002: pavement
+TfNSW-PAV-003: pavement
+TfNSW-DRN-001: drainage
+TfNSW-DRN-002: drainage
+TfNSW-DRN-003: drainage
+TfNSW-DRN-004: pump_station
+TfNSW-TRF-001: traffic_control
+TfNSW-TRF-002: variable_message_sign
+TfNSW-TRF-003: road_safety
+TfNSW-LGT-001: lighting
+TfNSW-TUN-001: tunnel
+TfNSW-ITS-001: its_cctv
+TfNSW-ITS-002: its_cctv
+TfNSW-PST-001: passenger_facilities
+TfNSW-UTL-001: water_supply
+TfNSW-UTL-002: its_cctv

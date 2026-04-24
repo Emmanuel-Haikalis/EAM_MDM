@@ -1,0 +1,465 @@
+# ISO 14224 / RCM-aligned failure mode vocabulary — 13 domains.
+# Used by ml_engine.py to enrich classification texts and score failure alignment.
+# Add new domains here; they are picked up automatically on the next run.
+
+bridge_structures:
+  iso_14224_class: "Civil Structures – Load-bearing"
+  category_keywords:
+    - bridge
+    - viaduct
+    - superstructure
+    - substructure
+    - deck
+    - span
+    - girder
+    - abutment
+    - pier
+  failure_modes:
+    - structural cracking
+    - spalling
+    - scour
+    - bearing failure
+    - chloride ingress
+    - delamination
+    - joint leakage
+    - fatigue
+    - settlement
+    - collision damage
+  failure_mechanisms:
+    - corrosion
+    - carbonation
+    - alkali silica reaction
+    - overload
+    - differential settlement
+    - vibration
+    - freeze thaw
+    - impact
+  inspection_terms:
+    - concrete condition
+    - steel corrosion
+    - deflection
+    - crack width
+    - cover depth
+    - load rating
+    - scour depth
+    - bearing inspection
+
+pavement:
+  iso_14224_class: "Civil Structures – Surface"
+  category_keywords:
+    - pavement
+    - road
+    - highway
+    - asphalt
+    - surfacing
+    - bitumen
+    - footpath
+    - pedestrian
+    - flexible
+    - rigid
+  failure_modes:
+    - rutting
+    - fatigue cracking
+    - potholing
+    - ravelling
+    - surface deformation
+    - bleeding
+    - shoving
+    - stripping
+    - edge break
+  failure_mechanisms:
+    - subgrade failure
+    - base failure
+    - moisture damage
+    - thermal cracking
+    - heavy vehicle loading
+    - aging
+    - oxidation
+    - frost heave
+  inspection_terms:
+    - roughness index
+    - rutting depth
+    - cracking percentage
+    - skid resistance
+    - deflection testing
+    - pavement condition index
+    - surface texture
+
+drainage:
+  iso_14224_class: "Piping Systems"
+  category_keywords:
+    - drain
+    - culvert
+    - stormwater
+    - pipe
+    - channel
+    - kerb
+    - gutter
+    - waterway
+    - inlet
+    - open channel
+  failure_modes:
+    - blockage
+    - structural collapse
+    - corrosion
+    - root intrusion
+    - sedimentation
+    - joint leakage
+    - overflow
+    - scour erosion
+  failure_mechanisms:
+    - soil corrosion
+    - abrasion
+    - hydraulic pressure
+    - differential settlement
+    - vegetation growth
+    - construction defect
+    - aging
+    - erosion
+  inspection_terms:
+    - CCTV inspection
+    - flow capacity
+    - joint condition
+    - invert level
+    - sediment depth
+    - structural condition
+    - headwall condition
+
+pump_station:
+  iso_14224_class: "Pumps and Compressors"
+  category_keywords:
+    - pump
+    - pump station
+    - wet well
+    - submersible
+    - rising main
+    - telemetry
+    - pumping
+  failure_modes:
+    - bearing failure
+    - seal failure
+    - cavitation
+    - impeller wear
+    - motor failure
+    - blockage
+    - control failure
+  failure_mechanisms:
+    - abrasive wear
+    - corrosion
+    - vibration fatigue
+    - overheating
+    - debris ingestion
+    - electrical fault
+    - aging insulation
+  inspection_terms:
+    - vibration analysis
+    - flow rate
+    - discharge pressure
+    - motor current
+    - wet well level
+    - run hours
+    - seal condition
+    - bearing temperature
+
+traffic_control:
+  iso_14224_class: "Instrumentation and Control"
+  category_keywords:
+    - traffic signal
+    - controller
+    - detector
+    - intersection
+    - phase
+    - SCATS
+    - signal head
+    - signal control
+  failure_modes:
+    - controller failure
+    - loop detector failure
+    - communication failure
+    - power supply failure
+    - signal timing fault
+    - phase conflict
+  failure_mechanisms:
+    - software fault
+    - electrical surge
+    - moisture ingress
+    - aging components
+    - cable damage
+    - vandalism
+    - detector cut
+  inspection_terms:
+    - phase timing
+    - detector sensitivity
+    - signal head condition
+    - controller diagnostics
+    - communication status
+    - power supply test
+
+variable_message_sign:
+  iso_14224_class: "Instrumentation and Control"
+  category_keywords:
+    - VMS
+    - variable message
+    - overhead sign
+    - gantry
+    - display
+    - LED sign
+    - dynamic sign
+    - motorway sign
+  failure_modes:
+    - LED panel failure
+    - pixel dropout
+    - communication failure
+    - structural failure
+    - display corruption
+  failure_mechanisms:
+    - LED aging
+    - moisture ingress
+    - power surge
+    - wind loading
+    - cable fault
+    - software error
+    - heat stress
+  inspection_terms:
+    - pixel check
+    - display brightness
+    - structural inspection
+    - communication test
+    - power supply condition
+    - cabinet condition
+
+lighting:
+  iso_14224_class: "Electrical Systems"
+  category_keywords:
+    - lighting
+    - luminaire
+    - street light
+    - lamp
+    - pole
+    - HPS
+    - LED light
+    - column
+    - luminaire bracket
+  failure_modes:
+    - lamp failure
+    - ballast failure
+    - pole corrosion
+    - cable fault
+    - photocell failure
+    - column impact damage
+  failure_mechanisms:
+    - end of lamp life
+    - corrosion
+    - UV degradation
+    - vibration fatigue
+    - electrical fault
+    - moisture ingress
+    - vehicle impact
+  inspection_terms:
+    - lamp condition
+    - column corrosion
+    - cable test
+    - photocell operation
+    - earthing test
+    - bracket condition
+    - base plate condition
+
+tunnel:
+  iso_14224_class: "Civil Structures – Underground"
+  category_keywords:
+    - tunnel
+    - tunnel lining
+    - underground
+    - ventilation fan
+    - jet fan
+    - tunnel drainage
+    - portal
+  failure_modes:
+    - lining cracking
+    - water ingress
+    - joint leakage
+    - ventilation failure
+    - fire damage
+    - drainage failure
+  failure_mechanisms:
+    - groundwater pressure
+    - geological movement
+    - construction joint defect
+    - aging concrete
+    - vibration
+    - seismic activity
+    - thermal stress
+  inspection_terms:
+    - lining condition
+    - water ingress mapping
+    - drainage inspection
+    - ventilation test
+    - structural monitoring
+    - fire protection condition
+
+its_cctv:
+  iso_14224_class: "Instrumentation and Control"
+  category_keywords:
+    - CCTV
+    - camera
+    - PTZ
+    - incident detection
+    - surveillance
+    - monitoring
+    - ITS
+    - intelligent transport
+    - ANPR
+    - detection
+  failure_modes:
+    - camera failure
+    - lens fouling
+    - communication failure
+    - pan-tilt mechanism failure
+    - power fault
+    - housing damage
+  failure_mechanisms:
+    - aging electronics
+    - moisture ingress
+    - vandalism
+    - UV degradation
+    - cable damage
+    - power surge
+    - mechanical wear
+  inspection_terms:
+    - image quality
+    - pan-tilt operation
+    - housing condition
+    - communication test
+    - cable condition
+    - mounting integrity
+
+retaining_structures:
+  iso_14224_class: "Civil Structures – Earth Retention"
+  category_keywords:
+    - retaining wall
+    - embankment
+    - soil retention
+    - cantilever
+    - MSE wall
+    - geotechnical
+    - earth retention
+  failure_modes:
+    - sliding
+    - overturning
+    - bearing failure
+    - tie-back failure
+    - drainage failure
+    - wall cracking
+    - MSE strip corrosion
+  failure_mechanisms:
+    - excess pore pressure
+    - soil saturation
+    - surcharge overload
+    - corrosion of reinforcement
+    - drainage blockage
+    - construction defect
+  inspection_terms:
+    - wall deflection
+    - crack mapping
+    - drainage condition
+    - anchor load test
+    - facing condition
+    - vegetation inspection
+
+water_supply:
+  iso_14224_class: "Piping Systems – Pressure"
+  category_keywords:
+    - water main
+    - water pipe
+    - distribution pipe
+    - pressure main
+    - cast iron pipe
+    - DN
+    - water supply
+    - water distribution
+  failure_modes:
+    - pipe burst
+    - corrosion perforation
+    - tuberculation
+    - valve failure
+    - joint failure
+    - water hammer
+  failure_mechanisms:
+    - external corrosion
+    - internal corrosion
+    - pressure transient
+    - soil movement
+    - aging material
+    - electrolytic corrosion
+  inspection_terms:
+    - pressure test
+    - pipe condition assessment
+    - CCTV survey
+    - corrosion survey
+    - leak detection
+    - break frequency
+
+passenger_facilities:
+  iso_14224_class: "Civil Structures – Amenity"
+  category_keywords:
+    - bus shelter
+    - passenger shelter
+    - waiting area
+    - shelter
+    - seating
+    - amenity
+    - passenger facility
+  failure_modes:
+    - structural damage
+    - glazing failure
+    - vandalism
+    - display failure
+    - roof leakage
+  failure_mechanisms:
+    - impact damage
+    - weathering
+    - aging
+    - graffiti
+    - vandalism
+    - UV degradation
+    - corrosion
+  inspection_terms:
+    - structural condition
+    - glazing condition
+    - roof condition
+    - seating condition
+    - display operation
+    - graffiti assessment
+
+road_safety:
+  iso_14224_class: "Civil Structures – Safety"
+  category_keywords:
+    - guardrail
+    - safety barrier
+    - W-beam
+    - crash barrier
+    - road safety
+    - end treatment
+    - post
+    - barrier system
+  failure_modes:
+    - vehicle impact damage
+    - post corrosion
+    - beam deformation
+    - end treatment failure
+    - cable tension loss
+    - splice failure
+  failure_mechanisms:
+    - vehicle collision
+    - corrosion
+    - fatigue
+    - overload
+    - construction defect
+    - inadequate anchorage
+  inspection_terms:
+    - barrier height
+    - post condition
+    - beam deflection
+    - end treatment condition
+    - splice condition
+    - corrosion rating

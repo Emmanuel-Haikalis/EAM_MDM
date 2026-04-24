@@ -1,9 +1,11 @@
 import re
 import numpy as np
 import pandas as pd
-from typing import Any, Dict, List, Tuple
+from collections import Counter
+from typing import Any, Dict, List, Optional, Tuple
 
 from .similarity_engine import SimilarityEngine, build_asset_text, build_classification_text, _clean, _STOP_WORDS
+from .hierarchy import HierarchyIndex
 
 _RANK_LABEL = {1: "1st", 2: "2nd", 3: "3rd"}
 
@@ -18,10 +20,6 @@ def _rank_label(n: int) -> str:
     return f"{n}{('th', 'st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th')[n % 10]}"
 
 
-# Confidence thresholds are calibrated for post-normalisation scores [5, 95]:
-#   high   >= 70  (strong term + hierarchy overlap, reliable match)
-#   medium >= 45  (partial overlap, generally correct but verify)
-#   low    <  45  (ambiguous or insufficient data, manual review needed)
 _HIGH_THRESH = 70
 _MED_THRESH = 45
 
@@ -63,7 +61,9 @@ def _reasoning(
     a: float,
     b: float,
     c: float,
+    score_2nd: Optional[float] = None,
 ) -> str:
+    """Generate human-readable match reasoning including score gap to 2nd candidate."""
     shared = set(_keywords(asset_text)) & set(_keywords(class_text))
     dominant = _dominant_component(a, b, c)
 
@@ -86,6 +86,10 @@ def _reasoning(
     else:
         base = f"Low confidence match to '{class_name}'; manual review required"
 
+    if score_2nd is not None:
+        gap = round(score - score_2nd, 1)
+        base = f"{base}. Score gap to 2nd: +{gap:.0f} pts"
+
     return base
 
 
@@ -93,11 +97,12 @@ def _classify_one(
     asset_row: pd.Series,
     system_name: str,
     class_df: pd.DataFrame,
-    calibrated: np.ndarray,   # shape (n_classes,) — post-calibration hybrid scores
-    a_arr: np.ndarray,         # shape (n_classes,) — pre-calib Component A
-    b_arr: np.ndarray,         # shape (n_classes,) — pre-calib Component B
-    c_arr: np.ndarray,         # shape (n_classes,) — pre-calib Component C
+    calibrated: np.ndarray,
+    a_arr: np.ndarray,
+    b_arr: np.ndarray,
+    c_arr: np.ndarray,
     top_n: int,
+    hierarchy: Optional[HierarchyIndex] = None,
 ) -> List[Dict[str, Any]]:
     asset_text = build_asset_text(asset_row)
     asset_id = str(asset_row.get("asset_id", ""))
@@ -106,26 +111,36 @@ def _classify_one(
     n = min(top_n, len(class_df))
     top_idx = np.argsort(calibrated)[::-1][:n]
 
+    score_2nd_val = float(calibrated[top_idx[1]]) if n >= 2 else None
+
     results = []
     for rank, idx in enumerate(top_idx, start=1):
         crow = class_df.iloc[int(idx)]
         class_text = build_classification_text(crow)
         matched_category = str(crow.get("category", ""))
+        matched_code = str(crow["classification_code"])
         cal_score = float(calibrated[idx])
         a, b, c = float(a_arr[idx]), float(b_arr[idx]), float(c_arr[idx])
+
+        # Leaf score boost (hierarchy-aware, no-op when hierarchy absent)
+        if hierarchy is not None and rank == 1:
+            cal_score = hierarchy.leaf_boost(cal_score, matched_code, calibrated, class_df)
 
         reasoning = (
             "Insufficient asset data for reliable matching"
             if not asset_text.strip()
-            else _reasoning(asset_text, str(crow["classification_name"]),
-                            class_text, matched_category, cal_score, a, b, c)
+            else _reasoning(
+                asset_text, str(crow["classification_name"]),
+                class_text, matched_category, cal_score, a, b, c,
+                score_2nd=score_2nd_val if rank == 1 else None,
+            )
         )
 
         results.append({
             "asset_id": asset_id,
             "asset_name": asset_name,
             "classification_system": system_name,
-            "matched_classification_code": str(crow["classification_code"]),
+            "matched_classification_code": matched_code,
             "matched_classification_name": str(crow["classification_name"]),
             "similarity_score": round(cal_score, 1),
             "match_rank": _rank_label(rank),
@@ -160,28 +175,83 @@ def _calibrate_scores(
     return calibrated
 
 
+def _compute_composite_confidence(
+    df: pd.DataFrame,
+    n_systems: int,
+    code_to_domain: Optional[Dict[str, str]] = None,
+) -> pd.Series:
+    """Compute multi-signal composite confidence for every row.
+
+    composite = 0.60 × similarity_score
+              + 0.25 × cross_system_agreement_bonus   (100 agree / 50 single / 0 diverge)
+              + 0.15 × failure_alignment_score         (0 in fast mode)
+    """
+    agreement: Dict[str, float] = {}
+    if n_systems > 1 and code_to_domain:
+        top1 = df[df["match_rank"] == "1st"]
+        for asset_id, grp in top1.groupby("asset_id"):
+            domains = [
+                code_to_domain.get(str(row["matched_classification_code"]),
+                                   str(row.get("matched_category", "")))
+                for _, row in grp.iterrows()
+            ]
+            domains = [d for d in domains if d]
+            if not domains:
+                agreement[str(asset_id)] = 50.0
+                continue
+            most_common_count = Counter(domains).most_common(1)[0][1]
+            agreement[str(asset_id)] = 100.0 if most_common_count > n_systems / 2 else 0.0
+    else:
+        for asset_id in df["asset_id"].unique():
+            agreement[str(asset_id)] = 50.0
+
+    f_align = pd.to_numeric(
+        df.get("failure_alignment_score", pd.Series(0.0, index=df.index)),
+        errors="coerce",
+    ).fillna(0.0)
+
+    bonus = df["asset_id"].astype(str).map(agreement).fillna(50.0)
+    return (0.60 * df["similarity_score"] + 0.25 * bonus + 0.15 * f_align).round(1)
+
+
 def classify_all(
     asset_df: pd.DataFrame,
     classification_tables: Dict[str, pd.DataFrame],
     top_n: int = 3,
+    cache_dir: Optional[str] = None,
 ) -> pd.DataFrame:
     """Two-pass classification with per-system score calibration.
 
-    Pass 1: Score every asset against every system, collect raw arrays.
+    Pass 1 (batch): Score ALL assets against ALL systems in vectorized matrix ops.
     Calibrate: per-system min-max normalisation to [5, 95].
     Pass 2: Build output records from calibrated scores.
     """
     if asset_df.empty:
         return pd.DataFrame()
 
-    # Build engines (one per system) with full + category texts
+    try:
+        from .ml_engine import _CODE_TO_DOMAIN as code_to_domain
+    except ImportError:
+        code_to_domain = {}
+
+    from .cache import FitCache
+    cache = FitCache(cache_dir)
+
+    # Build engines and hierarchy indices per system
     engines: Dict[str, SimilarityEngine] = {}
+    hierarchy_indices: Dict[str, HierarchyIndex] = {}
+
     for system, cdf in classification_tables.items():
-        eng = SimilarityEngine()
-        full_texts = [build_classification_text(r) for _, r in cdf.iterrows()]
-        # Include classification_name in category text so the vocabulary
-        # contains both singular and plural forms (e.g. "bridge" from
-        # "Bridge Deck…" in addition to "bridges" from subcategory).
+        hi = HierarchyIndex()
+        hi.build(cdf)
+        hierarchy_indices[system] = hi
+
+        cached_eng = cache.load_tfidf(system, cdf)
+        if cached_eng is not None:
+            engines[system] = cached_eng
+            continue
+
+        full_texts = hi.enrich_texts(cdf)
         cat_texts = [
             " ".join(filter(None, [
                 str(r.get("classification_name", "")).strip(),
@@ -190,39 +260,28 @@ def classify_all(
             ]))
             for _, r in cdf.iterrows()
         ]
+        eng = SimilarityEngine()
         eng.fit(full_texts, category_texts=cat_texts)
+        cache.save_tfidf(system, cdf, eng)
         engines[system] = eng
 
     total = len(asset_df)
+    all_texts = [build_asset_text(row) for _, row in asset_df.iterrows()]
 
-    # ---------- Pass 1: collect raw scores --------------------------------
-    # raw[system][row_idx] = (hybrid_arr, a_arr, b_arr, c_arr)
-    # Keyed by row index (not asset_id) so duplicate asset_ids don't collide.
+    # ---------- Pass 1: batch-score all assets (one matrix multiply per system) --
+    # raw[system][i] = (hybrid_arr, a_arr, b_arr, c_arr)  keyed by 1-based row index
     raw: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {
         s: {} for s in classification_tables
     }
-    n_classes_per_system: Dict[str, int] = {
-        s: len(cdf) for s, cdf in classification_tables.items()
-    }
+
+    for system, eng in engines.items():
+        hybrid_mat, a_mat, b_mat, c_mat = eng.score_batch(all_texts)
+        for i in range(total):
+            raw[system][i + 1] = (hybrid_mat[i], a_mat[i], b_mat[i], c_mat[i])
 
     for i, (_, asset_row) in enumerate(asset_df.iterrows(), start=1):
         label = asset_row.get("asset_name") or asset_row.get("asset_id") or f"row {i}"
         print(f"  [{i}/{total}] {label}")
-        asset_text = build_asset_text(asset_row)
-
-        for system, eng in engines.items():
-            n_cls = n_classes_per_system[system]
-            results = eng.score_raw(asset_text, top_n=n_cls)
-            hybrid_arr = np.zeros(n_cls)
-            a_arr = np.zeros(n_cls)
-            b_arr = np.zeros(n_cls)
-            c_arr = np.zeros(n_cls)
-            for idx, h, a, b, c in results:
-                hybrid_arr[idx] = h
-                a_arr[idx] = a
-                b_arr[idx] = b
-                c_arr[idx] = c
-            raw[system][i] = (hybrid_arr, a_arr, b_arr, c_arr)
 
     # ---------- Calibrate ------------------------------------------------
     raw_hybrid = {s: {i: arrs[0] for i, arrs in am.items()} for s, am in raw.items()}
@@ -234,8 +293,16 @@ def classify_all(
         for system, cdf in classification_tables.items():
             _, a_arr, b_arr, c_arr = raw[system][i]
             calibrated = cal_hybrid[system][i]
+            hi = hierarchy_indices[system]
             records.extend(
-                _classify_one(asset_row, system, cdf, calibrated, a_arr, b_arr, c_arr, top_n)
+                _classify_one(asset_row, system, cdf, calibrated, a_arr, b_arr, c_arr, top_n, hi)
             )
 
-    return pd.DataFrame(records)
+    df = pd.DataFrame(records)
+
+    if not df.empty:
+        df["composite_confidence"] = _compute_composite_confidence(
+            df, n_systems=len(classification_tables), code_to_domain=code_to_domain
+        )
+
+    return df

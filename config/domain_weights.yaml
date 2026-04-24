@@ -1,0 +1,28 @@
+# Per-domain component weight overrides for the hybrid similarity scorer.
+# A = TF-IDF full-text  B = TF-IDF category  C = Jaccard keywords  D = Embeddings
+# Each weight set must sum to 1.0; missing domains fall back to defaults.
+# Used in composite_confidence calculation.
+
+defaults:
+  fast: {A: 0.50, B: 0.25, C: 0.25}
+  ml:   {A: 0.35, B: 0.15, C: 0.15, D: 0.35}
+
+overrides:
+  bridge_structures:
+    # Category hierarchy is a strong signal for civil structures
+    fast: {A: 0.40, B: 0.35, C: 0.25}
+    ml:   {A: 0.30, B: 0.20, C: 0.15, D: 0.35}
+  its_cctv:
+    # ITS assets are description-heavy; TF-IDF full-text is most discriminating
+    fast: {A: 0.55, B: 0.20, C: 0.25}
+    ml:   {A: 0.40, B: 0.10, C: 0.15, D: 0.35}
+  traffic_control:
+    fast: {A: 0.50, B: 0.30, C: 0.20}
+    ml:   {A: 0.35, B: 0.20, C: 0.10, D: 0.35}
+  variable_message_sign:
+    fast: {A: 0.50, B: 0.30, C: 0.20}
+    ml:   {A: 0.35, B: 0.20, C: 0.10, D: 0.35}
+  pavement:
+    # Pavement has rich keyword vocabulary; boost Jaccard
+    fast: {A: 0.45, B: 0.20, C: 0.35}
+    ml:   {A: 0.30, B: 0.10, C: 0.25, D: 0.35}
