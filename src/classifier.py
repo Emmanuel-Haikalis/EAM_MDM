@@ -7,6 +7,17 @@ from .similarity_engine import SimilarityEngine, build_asset_text, build_classif
 
 _RANK_LABEL = {1: "1st", 2: "2nd", 3: "3rd"}
 
+
+def _rank_label(n: int) -> str:
+    """Return the correct ordinal string for rank n (1st, 2nd, 21st, 22nd …)."""
+    if n in _RANK_LABEL:
+        return _RANK_LABEL[n]
+    # Handles 11th/12th/13th correctly (not 11st/12nd/13rd)
+    if 11 <= n % 100 <= 13:
+        return f"{n}th"
+    return f"{n}{('th', 'st', 'nd', 'rd', 'th', 'th', 'th', 'th', 'th', 'th')[n % 10]}"
+
+
 # Confidence thresholds are calibrated for post-normalisation scores [5, 95]:
 #   high   >= 70  (strong term + hierarchy overlap, reliable match)
 #   medium >= 45  (partial overlap, generally correct but verify)
@@ -117,7 +128,7 @@ def _classify_one(
             "matched_classification_code": str(crow["classification_code"]),
             "matched_classification_name": str(crow["classification_name"]),
             "similarity_score": round(cal_score, 1),
-            "match_rank": _RANK_LABEL.get(rank, f"{rank}th"),
+            "match_rank": _rank_label(rank),
             "confidence_flag": _confidence_flag(cal_score),
             "reasoning": reasoning,
             "matched_category": matched_category,
@@ -160,6 +171,9 @@ def classify_all(
     Calibrate: per-system min-max normalisation to [5, 95].
     Pass 2: Build output records from calibrated scores.
     """
+    if asset_df.empty:
+        return pd.DataFrame()
+
     # Build engines (one per system) with full + category texts
     engines: Dict[str, SimilarityEngine] = {}
     for system, cdf in classification_tables.items():
@@ -180,11 +194,11 @@ def classify_all(
         engines[system] = eng
 
     total = len(asset_df)
-    asset_ids = asset_df["asset_id"].tolist()
 
     # ---------- Pass 1: collect raw scores --------------------------------
-    # raw[system][asset_id] = (hybrid_arr, a_arr, b_arr, c_arr)
-    raw: Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {
+    # raw[system][row_idx] = (hybrid_arr, a_arr, b_arr, c_arr)
+    # Keyed by row index (not asset_id) so duplicate asset_ids don't collide.
+    raw: Dict[str, Dict[int, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]] = {
         s: {} for s in classification_tables
     }
     n_classes_per_system: Dict[str, int] = {
@@ -195,12 +209,10 @@ def classify_all(
         label = asset_row.get("asset_name") or asset_row.get("asset_id") or f"row {i}"
         print(f"  [{i}/{total}] {label}")
         asset_text = build_asset_text(asset_row)
-        aid = str(asset_row.get("asset_id", f"_row{i}"))
 
         for system, eng in engines.items():
             n_cls = n_classes_per_system[system]
             results = eng.score_raw(asset_text, top_n=n_cls)
-            # Re-expand to full n_classes arrays (score_raw already returns all)
             hybrid_arr = np.zeros(n_cls)
             a_arr = np.zeros(n_cls)
             b_arr = np.zeros(n_cls)
@@ -210,19 +222,18 @@ def classify_all(
                 a_arr[idx] = a
                 b_arr[idx] = b
                 c_arr[idx] = c
-            raw[system][aid] = (hybrid_arr, a_arr, b_arr, c_arr)
+            raw[system][i] = (hybrid_arr, a_arr, b_arr, c_arr)
 
     # ---------- Calibrate ------------------------------------------------
-    raw_hybrid = {s: {aid: arrs[0] for aid, arrs in am.items()} for s, am in raw.items()}
+    raw_hybrid = {s: {i: arrs[0] for i, arrs in am.items()} for s, am in raw.items()}
     cal_hybrid = _calibrate_scores(raw_hybrid)
 
     # ---------- Pass 2: build records ------------------------------------
     records: List[Dict[str, Any]] = []
     for i, (_, asset_row) in enumerate(asset_df.iterrows(), start=1):
-        aid = str(asset_row.get("asset_id", f"_row{i}"))
         for system, cdf in classification_tables.items():
-            _, a_arr, b_arr, c_arr = raw[system][aid]
-            calibrated = cal_hybrid[system][aid]
+            _, a_arr, b_arr, c_arr = raw[system][i]
+            calibrated = cal_hybrid[system][i]
             records.extend(
                 _classify_one(asset_row, system, cdf, calibrated, a_arr, b_arr, c_arr, top_n)
             )

@@ -103,6 +103,9 @@ def main() -> int:
         return 0
 
     # ── Validate required args for classification mode ────────────────────────
+    if args.top_n < 1:
+        print("ERROR: --top-n must be at least 1.", file=sys.stderr)
+        return 1
     if not args.assets:
         print("ERROR: --assets is required (or use --generate-templates to create blank templates).",
               file=sys.stderr)

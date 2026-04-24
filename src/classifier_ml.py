@@ -21,6 +21,7 @@ import pandas as pd
 
 from .classifier import (
     _RANK_LABEL,
+    _rank_label,
     _calibrate_scores,
     _confidence_flag,
     _reasoning,
@@ -163,7 +164,7 @@ def _classify_one_ml(
             "matched_classification_code": matched_code,
             "matched_classification_name": str(crow["classification_name"]),
             "similarity_score":            round(cal_score, 1),
-            "match_rank":                  _RANK_LABEL.get(rank, f"{rank}th"),
+            "match_rank":                  _rank_label(rank),
             "confidence_flag":             _confidence_flag(cal_score),
             "reasoning":                   reasoning,
             "matched_category":            matched_cat,
@@ -207,6 +208,9 @@ def classify_all_ml(
 
     Falls back gracefully to TF-IDF weights if sentence-transformers is absent.
     """
+    if asset_df.empty:
+        return pd.DataFrame()
+
     # ── A: Create shared engines ─────────────────────────────────────────────
     embedding_engine = EmbeddingEngine(embedding_model_name)
     failure_engine   = FailureModeEngine()
@@ -259,8 +263,9 @@ def classify_all_ml(
     cross_reg.build(classification_tables, system_matrices, threshold=equiv_threshold)
 
     # ── D: PASS 1 — collect raw scores ───────────────────────────────────────
-    # raw_ml[system][asset_id] = (hybrid_ml, a_arr, b_arr, c_arr, d_arr)
-    raw_ml: Dict[str, Dict[str, Tuple[
+    # raw_ml[system][row_idx] = (hybrid_ml, a_arr, b_arr, c_arr, d_arr)
+    # Keyed by row index (not asset_id) so duplicate asset_ids don't collide.
+    raw_ml: Dict[str, Dict[int, Tuple[
         np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
     ]]] = {s: {} for s in classification_tables}
 
@@ -269,7 +274,6 @@ def classify_all_ml(
                  or asset_row.get("asset_id") or f"row {i}")
         print(f"  [{i}/{total}] {label}")
         asset_text = build_asset_text(asset_row)
-        aid = str(asset_row.get("asset_id", f"_row{i}"))
 
         for system, eng in sim_engines.items():
             n_cls = n_classes_per_system[system]
@@ -300,11 +304,11 @@ def classify_all_ml(
                 d_arr     = np.zeros(n_cls)
                 hybrid_ml = 0.50 * a_arr + 0.25 * b_arr + 0.25 * c_arr
 
-            raw_ml[system][aid] = (hybrid_ml, a_arr, b_arr, c_arr, d_arr)
+            raw_ml[system][i] = (hybrid_ml, a_arr, b_arr, c_arr, d_arr)
 
     # ── E: Calibrate per system ───────────────────────────────────────────────
     raw_hybrid = {
-        s: {aid: arrs[0] for aid, arrs in am.items()}
+        s: {i: arrs[0] for i, arrs in am.items()}
         for s, am in raw_ml.items()
     }
     cal_hybrid = _calibrate_scores(raw_hybrid)
@@ -312,12 +316,11 @@ def classify_all_ml(
     # ── F: PASS 2 — build output records ─────────────────────────────────────
     records: List[Dict[str, Any]] = []
     for i, (_, asset_row) in enumerate(asset_df.iterrows(), start=1):
-        aid = str(asset_row.get("asset_id", f"_row{i}"))
         asset_text = build_asset_text(asset_row)
 
         for system, cdf in classification_tables.items():
-            _, a_arr, b_arr, c_arr, d_arr = raw_ml[system][aid]
-            calibrated = cal_hybrid[system][aid]
+            _, a_arr, b_arr, c_arr, d_arr = raw_ml[system][i]
+            calibrated = cal_hybrid[system][i]
 
             two_stage = two_stage_clfs[system].score_two_stage(
                 asset_text, top_categories=top_categories
