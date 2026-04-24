@@ -78,11 +78,12 @@ def build_asset_text(row: pd.Series) -> str:
     mfr_model = str(row.get("manufacturer_model", "")).strip()
 
     parts: list[str] = []
-    # Repeat high-signal fields to amplify their TF-IDF weight
+    # asset_type is the cleanest domain signal (structured field, no location noise)
+    # name gets ×2 not ×3 to reduce pollution from location tokens like "Main Street"
     if name:
-        parts += [name] * 3
+        parts += [name] * 2
     if atype:
-        parts += [atype] * 2
+        parts += [atype] * 3
     if existing_cls:
         parts += [existing_cls] * 2   # legacy classification is a strong domain prior
     if desc:

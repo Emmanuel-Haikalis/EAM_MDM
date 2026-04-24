@@ -4,6 +4,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
+
+# Failure-domain mapping used to normalize category names across systems
+# (UNICLASS uses 2 broad categories; AUSTROADS/TFNSW use 7–9 specific ones)
+try:
+    from .ml_engine import _CODE_TO_DOMAIN as _DOMAIN_MAP
+except ImportError:
+    _DOMAIN_MAP: Dict[str, str] = {}
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -96,15 +103,27 @@ def generate_summary(
     summary["manual_review_count"] = len(manual_review)
 
     # --- Cross-system category consistency (O6) ---
+    # Normalize via _DOMAIN_MAP (failure domain) when available so that broad
+    # UNICLASS categories ("Civil Engineering Systems") and narrow AUSTROADS/TfNSW
+    # categories ("Bridge Structures") compare as equivalent when they share a domain.
     if "matched_category" in results_df.columns and len(systems) > 1:
+        code_col = "matched_classification_code" if "matched_classification_code" in results_df.columns else None
         per_asset: Dict[str, bool] = {}
         for asset_id, grp in top1.groupby("asset_id"):
-            cats = grp["matched_category"].dropna().tolist()
-            if not cats:
+            if code_col and _DOMAIN_MAP:
+                domains = [
+                    _DOMAIN_MAP.get(str(row[code_col]), str(row["matched_category"]))
+                    for _, row in grp.iterrows()
+                    if pd.notna(row["matched_category"])
+                ]
+                labels = domains
+            else:
+                labels = grp["matched_category"].dropna().tolist()
+            if not labels:
                 per_asset[str(asset_id)] = False
                 continue
-            most_common_count = Counter(cats).most_common(1)[0][1]
-            # Majority (>50%) agree on same category → consistent
+            most_common_count = Counter(labels).most_common(1)[0][1]
+            # Majority (>50%) agree on same domain/category → consistent
             per_asset[str(asset_id)] = most_common_count > len(systems) / 2
 
         consistent = sum(per_asset.values())

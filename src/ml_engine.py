@@ -298,8 +298,8 @@ _CODE_TO_DOMAIN: Dict[str, str] = {
     "Ss_25_16_50": "tunnel",
     "Ss_25_16_57": "its_cctv",
     "Ss_25_30_10": "drainage",
-    "Ss_25_30_15": "drainage",
-    "Ss_25_30_20": "pump_station",
+    "Ss_25_30_15": "pump_station",   # Stormwater Pump Station Systems
+    "Ss_25_30_20": "drainage",       # Kerb Gutter and Drainage Channel Systems
     "Ss_25_50_15": "pavement",
     "Ss_25_60_25": "retaining_structures",
     "Ss_70_30_10": "passenger_facilities",
@@ -380,8 +380,6 @@ class EmbeddingEngine:
             return
         try:
             from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self._model_name, device="cpu")
-            self._available = True
         except ImportError:
             print(
                 "  [ML mode] sentence-transformers not installed — "
@@ -390,6 +388,42 @@ class EmbeddingEngine:
                 file=sys.stderr,
             )
             self._available = False
+            return
+
+        # 1. Try local cache first (instant, no network required)
+        try:
+            self._model = SentenceTransformer(
+                self._model_name, device="cpu", local_files_only=True
+            )
+            self._available = True
+            return
+        except Exception:
+            pass
+
+        # 2. Model not cached — probe network with a 3-second timeout before attempting download
+        import socket as _socket
+        try:
+            _socket.setdefaulttimeout(3)
+            _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM).connect(("8.8.8.8", 53))
+            _has_network = True
+        except Exception:
+            _has_network = False
+        finally:
+            _socket.setdefaulttimeout(None)
+
+        if not _has_network:
+            print(
+                "  [ML mode] Embedding model not cached and no network available — "
+                "falling back to TF-IDF weights.\n"
+                "  To enable embeddings: connect to internet once to download the model.",
+                file=sys.stderr,
+            )
+            self._available = False
+            return
+
+        try:
+            self._model = SentenceTransformer(self._model_name, device="cpu")
+            self._available = True
         except Exception as exc:
             print(f"  [ML mode] Could not load embedding model: {exc}", file=sys.stderr)
             self._available = False
@@ -441,7 +475,8 @@ class TwoStageResult:
 class TwoStageClassifier:
     """Two-stage classification filter.
 
-    Stage 1: embedding cosine on per-category aggregate texts → top-K categories.
+    Stage 1: embedding cosine (preferred) or TF-IDF cosine (fallback) on
+             per-category aggregate texts → top-K categories.
     Stage 2: caller restricts code search to candidate_indices.
     """
 
@@ -451,9 +486,13 @@ class TwoStageClassifier:
         self._cat_names: List[str] = []
         self._cat_to_indices: Dict[str, List[int]] = {}
         self._all_indices: List[int] = []
+        self._tfidf_vec = None          # TF-IDF fallback for stage1
+        self._tfidf_cat_matrix = None
 
     def fit(self, class_df: pd.DataFrame, failure_engine: "FailureModeEngine") -> None:
-        from .similarity_engine import build_classification_text
+        from .similarity_engine import build_classification_text, _clean
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity as _cos_sim
 
         # Group entries by category; build per-entry enriched text
         categories: Dict[str, Dict] = {}
@@ -471,12 +510,20 @@ class TwoStageClassifier:
         self._cat_names = list(categories.keys())
         self._cat_to_indices = {cat: data["indices"] for cat, data in categories.items()}
         self._all_indices = list(range(len(class_df)))
+        cat_agg_texts = [" ".join(data["texts"]) for data in categories.values()]
+
+        # Always build TF-IDF fallback so stage1 works even without embeddings
+        vec = TfidfVectorizer(analyzer="word", ngram_range=(1, 2), sublinear_tf=True, min_df=1)
+        cleaned = [_clean(t) for t in cat_agg_texts]
+        non_empty = [t for t in cleaned if t.strip()]
+        if non_empty:
+            self._tfidf_vec = vec
+            self._tfidf_cat_matrix = vec.fit_transform(cleaned)
 
         if not self._embedding_engine.available:
             self._cat_matrix = None
             return
 
-        cat_agg_texts = [" ".join(data["texts"]) for data in categories.values()]
         self._cat_matrix = self._embedding_engine.transform(cat_agg_texts)
 
     def score_two_stage(
@@ -484,7 +531,42 @@ class TwoStageClassifier:
         asset_text: str,
         top_categories: int = 2,
     ) -> TwoStageResult:
-        if self._cat_matrix is None or not self._embedding_engine.available:
+        from sklearn.metrics.pairwise import cosine_similarity as _cos_sim
+        from .similarity_engine import _clean
+
+        # TF-IDF fallback: stage1 still filters even without embeddings.
+        # Use a relative threshold (≥60% of top score) to avoid including weak
+        # noise categories — TF-IDF is less discriminating than embeddings so a
+        # strict threshold prevents e.g. "Lighting" being included for a bridge
+        # purely because the asset name contains "Street".
+        if (self._cat_matrix is None or not self._embedding_engine.available):
+            if self._tfidf_vec is not None and self._tfidf_cat_matrix is not None:
+                q = self._tfidf_vec.transform([_clean(asset_text)])
+                raw_scores = _cos_sim(q, self._tfidf_cat_matrix).flatten()
+                top_score = float(raw_scores.max()) if raw_scores.max() > 0 else 0.0
+                threshold = top_score * 0.60
+                # Always keep at least 1; add more only if score is close to top
+                k = min(top_categories, len(self._cat_names))
+                sorted_idx = np.argsort(raw_scores)[::-1]
+                top_idx = [sorted_idx[0]]  # always include best
+                for idx in sorted_idx[1:k]:
+                    if raw_scores[idx] >= threshold:
+                        top_idx.append(idx)
+                top_cat_names = [self._cat_names[i] for i in top_idx]
+                cat_score_dict = {
+                    self._cat_names[i]: round(float(raw_scores[i]) * 100, 1)
+                    for i in range(len(self._cat_names))
+                }
+                candidate_indices: List[int] = []
+                for cat in top_cat_names:
+                    candidate_indices.extend(self._cat_to_indices.get(cat, []))
+                return TwoStageResult(
+                    top_categories=top_cat_names,
+                    category_scores=cat_score_dict,
+                    candidate_indices=sorted(set(candidate_indices)),
+                    category_mismatch_flag=False,
+                    stage1_available=True,
+                )
             return TwoStageResult(
                 top_categories=list(self._cat_names),
                 category_scores={},
