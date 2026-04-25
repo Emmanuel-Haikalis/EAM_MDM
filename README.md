@@ -1,10 +1,12 @@
-# Asset Register Classification Tool
+# Asset Classification Tool
 
-Automatically matches your asset register against standardised classification systems (UNICLASS, AUSTROADS, TfNSW) and outputs a scored, colour-coded Excel report.
+This tool takes your list of assets and automatically finds the best matching classification codes for each one. It produces a colour-coded Excel report showing how confident each match is.
 
 ---
 
-## Setup
+## Before you start
+
+You need Python installed. Run this once to install the required packages:
 
 ```bash
 pip install -r requirements.txt
@@ -12,73 +14,55 @@ pip install -r requirements.txt
 
 ---
 
-## Quick Start
+## How to use it — 4 steps
 
-```bash
-python main.py \
-  --assets data/sample_asset_register.csv \
-  --classifications UNICLASS:data/uniclass_classification.csv \
-  --classifications AUSTROADS:data/austroads_classification.csv \
-  --classifications TFNSW:data/tfnsw_classification.csv \
-  --output output/
-```
+### Step 1 — Get the blank templates (first time only)
 
-Results are saved to the `output/` folder.
-
----
-
-## Step-by-Step Guide
-
-### Step 1 — Get blank templates
-
-If you're starting from scratch, generate pre-formatted CSV templates:
+Run this to create pre-formatted spreadsheet templates:
 
 ```bash
 python main.py --generate-templates --output templates/
 ```
 
-This creates:
-- `templates/template_asset_register.csv` — fill in your assets
-- `templates/template_classification_table.csv` — fill in your classification codes
+Two files are created inside the `templates/` folder:
+- `template_asset_register.csv` — your list of assets goes here
+- `template_classification_table.csv` — the classification codes go here
 
 ---
 
-### Step 2 — Prepare your Asset Register
+### Step 2 — Fill in your asset register
 
-Open `template_asset_register.csv` and fill in your assets.
+Open `template_asset_register.csv` and add one row per asset.
 
-| Column | Required? | Description |
-|---|---|---|
-| `asset_id` | **Yes** | Unique ID (e.g. AST001) |
-| `asset_name` | **Yes** | Full asset name |
-| `asset_type` | Recommended | High-level type (e.g. Bridge Structure) |
-| `description` | Recommended | What the asset is and does |
-| `technical_specs` | Recommended | Materials, dimensions, standards |
-| `location` | Optional | Where the asset is |
-| `condition` | Optional | Good / Fair / Poor |
-| `existing_classification` | Optional | Any legacy/current classification code — **boosts accuracy** |
-| `notes` | Optional | Engineer remarks or field notes — **boosts accuracy** |
-| `manufacturer_model` | Optional | Make and model (useful for ITS/mechanical assets) |
+**Required (the tool won't run without these):**
+- `asset_id` — a unique ID for each asset (e.g. AST001)
+- `asset_name` — the full name of the asset (e.g. Main Street Bridge)
 
-> **Tip:** The more fields you fill in, the better the match quality. `existing_classification` and `notes` are especially powerful if available.
+**Recommended (better results with these):**
+- `asset_type` — what type of asset it is (e.g. Bridge, Pump Station)
+- `description` — what the asset is and does
+- `technical_specs` — materials, dimensions, standards
+
+**Optional (include if you have them):**
+- `existing_classification` — any old or current classification code you already have
+- `notes` — any engineer comments or field observations
+- `location` — where the asset is
+- `condition` — current condition (Good / Fair / Poor)
+- `manufacturer_model` — make and model (useful for cameras, signals, etc.)
+
+> The more fields you fill in, the more accurate the results. Even a short description helps significantly.
 
 ---
 
-### Step 3 — Prepare your Classification Tables
+### Step 3 — Prepare your classification tables
 
-Each classification system (UNICLASS, AUSTROADS, TfNSW, or your own) needs its own CSV file.
+Each classification system you want to use (e.g. UNICLASS, AUSTROADS, TfNSW) needs its own CSV file.
 
-| Column | Required? | Description |
-|---|---|---|
-| `classification_code` | **Yes** | The code (e.g. Ss_25_13_15) |
-| `classification_name` | **Yes** | Short name |
-| `classification_description` | Recommended | Full description of what the code covers |
-| `category` | Recommended | High-level domain (e.g. Structures, Drainage) |
-| `subcategory` | Recommended | Mid-level group (e.g. Bridges, Pump Stations) |
-| `keywords` | Optional | Comma-separated synonyms or index terms |
-| `parent_code` | Optional | Parent code for hierarchy reference |
+**The sample files in the `data/` folder are ready to use as-is.** If you're using your own classification system, fill in the template with at minimum:
+- `classification_code` — the code (e.g. Ss_25_13_15)
+- `classification_name` — the name of the code (e.g. Bridge Structures)
 
-> The sample classification files in `data/` are ready to use as-is.
+Adding `classification_description`, `category`, and `subcategory` will improve accuracy.
 
 ---
 
@@ -87,86 +71,86 @@ Each classification system (UNICLASS, AUSTROADS, TfNSW, or your own) needs its o
 ```bash
 python main.py \
   --assets your_asset_register.csv \
-  --classifications UNICLASS:uniclass.csv \
-  --classifications AUSTROADS:austroads.csv \
+  --classifications UNICLASS:data/uniclass_classification.csv \
+  --classifications AUSTROADS:data/austroads_classification.csv \
+  --classifications TFNSW:data/tfnsw_classification.csv \
   --output output/
 ```
 
-You can include as many `--classifications` systems as you need.
+Change `your_asset_register.csv` to the path of your file. Add or remove `--classifications` lines for each system you want to use.
 
-**Options:**
-
-| Flag | Default | Description |
-|---|---|---|
-| `--assets` | — | Path to your asset register (CSV or Excel) |
-| `--classifications` | — | `NAME:PATH` pair, repeat for each system |
-| `--output` | `output/` | Folder for all output files |
-| `--top-n` | `3` | Number of candidate matches per asset per system |
-| `--generate-templates` | — | Write blank templates and exit |
+Results are saved to the `output/` folder.
 
 ---
 
-## Output Files
+## What you get
 
-All outputs land in your `--output` folder.
+Four files are created in your output folder:
 
-| File | Contents |
+| File | What it contains |
 |---|---|
-| `classification_results.csv` | Full results table — one row per asset × system × match rank |
-| `classification_results.xlsx` | Same data as Excel, colour-coded by confidence |
-| `classification_summary.json` | Machine-readable summary with statistics |
-| `classification_summary.txt` | Human-readable summary report |
+| `classification_results.xlsx` | The main report — open this first |
+| `classification_results.csv` | Same data as a plain CSV |
+| `classification_summary.txt` | A plain-text summary of results |
+| `classification_summary.json` | Machine-readable summary |
 
-### Excel Colour Coding
+### Reading the Excel report
 
-| Colour | Confidence | Meaning |
-|---|---|---|
-| 🟢 Green | High (score ≥ 70) | Reliable match — accept with spot-check |
-| 🟡 Amber | Medium (score 45–69) | Good match — review before accepting |
-| 🔴 Red | Low (score < 45) | Ambiguous — manual classification needed |
+Each row is one potential match. Every asset gets the top 3 matches per classification system, ranked best to worst.
 
-### Result Columns
+**Rows are colour-coded by confidence:**
 
-| Column | Description |
+| Colour | Meaning |
 |---|---|
-| `asset_id` / `asset_name` | From your register |
-| `classification_system` | UNICLASS / AUSTROADS / TFNSW etc. |
-| `matched_classification_code` | Best-matching code |
-| `matched_classification_name` | Name of that code |
-| `matched_category` | Domain category of the match |
-| `similarity_score` | 0–100 (calibrated per system) |
-| `match_rank` | 1st / 2nd / 3rd best match |
-| `confidence_flag` | high / medium / low |
-| `reasoning` | Why this match was selected |
-| `score_breakdown` | Component scores: `TF-IDF \| Category \| Jaccard` |
+| Green | Strong match — safe to accept after a quick check |
+| Amber | Decent match — review before accepting |
+| Red | Weak match — needs manual classification |
 
----
+**Key columns to look at:**
 
-## Summary Report
-
-After each run the console prints (and `classification_summary.txt` saves):
-
-- Total assets processed and confidence distribution per system
-- Which assets need manual review
-- Cross-system consistency — whether all three systems agree on the asset's domain
-- Data quality — which fields in your register are populated
-
----
-
-## Tips for Better Results
-
-1. **Fill in `description` and `technical_specs`** — these two fields have the most impact on match quality.
-2. **Use `existing_classification`** if you have legacy codes — the tool treats these as a strong prior signal.
-3. **Add `notes`** from field staff — informal remarks often contain specific technical terms that improve accuracy.
-4. **Use the `keywords` column** in your classification tables to add synonyms and alternative terms.
-5. **Low-confidence assets** (red rows) are flagged in the summary — focus your manual review effort there.
-
----
-
-## Common Errors
-
-| Error | Fix |
+| Column | What it tells you |
 |---|---|
-| `missing required columns: ['asset_id']` | Check your column names match the template — run `--generate-templates` to see the expected format |
-| `File not found: path/to/file.csv` | Check the file path; use absolute paths if needed |
-| `Unsupported format '.xlsx'` | Ensure `openpyxl` is installed: `pip install openpyxl` |
+| `matched_classification_code` | The code that was matched |
+| `matched_classification_name` | The name of that code |
+| `similarity_score` | How strong the match is (0–100) |
+| `composite_confidence` | Overall confidence combining score, cross-system agreement, and failure-mode alignment |
+| `match_rank` | 1st is the best match, 2nd is next, and so on |
+| `confidence_flag` | high / medium / low — same as the row colour |
+| `reasoning` | Plain-English explanation of why this match was chosen |
+
+---
+
+## Extra options
+
+### Speed up repeated runs with caching
+
+If you run the tool multiple times with the same classification tables, use `--cache-dir` to save the fitting step:
+
+```bash
+python main.py \
+  --assets your_asset_register.csv \
+  --classifications UNICLASS:data/uniclass_classification.csv \
+  --output output/ \
+  --cache-dir cache/
+```
+
+The first run saves the fitted data to `cache/`. Every run after that loads from cache and starts faster. The cache resets automatically if you change a classification file.
+
+### Get more or fewer match candidates
+
+By default you get the top 3 matches per asset. Change this with `--top-n`:
+
+```bash
+python main.py --assets ... --classifications ... --top-n 5
+```
+
+---
+
+## Something went wrong?
+
+| Error message | What to do |
+|---|---|
+| `missing required columns: ['asset_id']` | Open your asset register and make sure the column is named exactly `asset_id` (lowercase, no spaces). Run `--generate-templates` to see the correct format. |
+| `No such file or directory` | Check the file path in your command. Copy and paste the full path to be safe. |
+| `ERROR: --assets is required` | You forgot to include `--assets your_file.csv` in the command. |
+| `Unsupported file format` | The tool accepts `.csv` and `.xlsx` files only. |
