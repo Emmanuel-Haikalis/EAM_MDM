@@ -1,3 +1,4 @@
+import logging
 import re
 import numpy as np
 import pandas as pd
@@ -6,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .similarity_engine import SimilarityEngine, build_asset_text, build_classification_text, _clean, _STOP_WORDS
 from .hierarchy import HierarchyIndex
+
+logger = logging.getLogger(__name__)
 
 _RANK_LABEL = {1: "1st", 2: "2nd", 3: "3rd"}
 
@@ -281,7 +284,7 @@ def classify_all(
 
     for i, (_, asset_row) in enumerate(asset_df.iterrows(), start=1):
         label = asset_row.get("asset_name") or asset_row.get("asset_id") or f"row {i}"
-        print(f"  [{i}/{total}] {label}")
+        logger.info("[%d/%d] %s", i, total, label)
 
     # ---------- Calibrate ------------------------------------------------
     raw_hybrid = {s: {i: arrs[0] for i, arrs in am.items()} for s, am in raw.items()}

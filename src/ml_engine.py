@@ -13,7 +13,6 @@ No imports from classifier.py or classifier_ml.py (zero circular dependency).
 
 from __future__ import annotations
 
-import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -21,7 +20,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+import logging
+
 from .config_loader import load_config as _load_config
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Failure mode vocabulary — ISO 14224 / RCM-aligned, 13 domains
@@ -389,11 +392,9 @@ class EmbeddingEngine:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError:
-            print(
-                "  [ML mode] sentence-transformers not installed — "
-                "falling back to TF-IDF weights.\n"
-                "  Install with: pip install sentence-transformers",
-                file=sys.stderr,
+            logger.warning(
+                "[ML mode] sentence-transformers not installed — falling back to TF-IDF weights. "
+                "Install with: pip install sentence-transformers"
             )
             self._available = False
             return
@@ -420,11 +421,10 @@ class EmbeddingEngine:
             _socket.setdefaulttimeout(None)
 
         if not _has_network:
-            print(
-                "  [ML mode] Embedding model not cached and no network available — "
-                "falling back to TF-IDF weights.\n"
-                "  To enable embeddings: connect to internet once to download the model.",
-                file=sys.stderr,
+            logger.warning(
+                "[ML mode] Embedding model not cached and no network available — "
+                "falling back to TF-IDF weights. "
+                "Connect to the internet once to download the model."
             )
             self._available = False
             return
@@ -433,7 +433,7 @@ class EmbeddingEngine:
             self._model = SentenceTransformer(self._model_name, device="cpu")
             self._available = True
         except Exception as exc:
-            print(f"  [ML mode] Could not load embedding model: {exc}", file=sys.stderr)
+            logger.error("[ML mode] Could not load embedding model: %s", exc)
             self._available = False
 
     def fit(self, texts: List[str]) -> np.ndarray:

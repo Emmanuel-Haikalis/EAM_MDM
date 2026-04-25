@@ -1,6 +1,9 @@
+import logging
 import pandas as pd
 from pathlib import Path
 from typing import Any, Dict, Tuple
+
+logger = logging.getLogger(__name__)
 
 ASSET_REQUIRED = ["asset_id", "asset_name"]
 CLASSIFICATION_REQUIRED = ["classification_code", "classification_name"]
@@ -71,16 +74,17 @@ def load_asset_register(path: str) -> Tuple[pd.DataFrame, Dict[str, Any]]:
     df["asset_id"] = df["asset_id"].fillna("").str.strip()
     df["asset_name"] = df["asset_name"].fillna("").str.strip()
 
-    # Warn about columns that strongly affect match quality
     for col in _HIGH_VALUE_COLS:
         if col not in df.columns or (df[col] == "").all():
-            print(f"  WARNING: '{col}' column is missing or empty — match quality will be reduced.")
+            logger.warning("'%s' column is missing or empty — match quality will be reduced.", col)
 
     quality_stats = _compute_quality(df)
 
     if quality_stats["duplicate_count"] > 0:
         dupes = quality_stats["duplicate_asset_ids"]
-        print(f"  WARNING: {quality_stats['duplicate_count']} duplicate asset_id(s) found: {dupes}")
+        logger.warning(
+            "%d duplicate asset_id(s) found: %s", quality_stats["duplicate_count"], dupes
+        )
 
     return df.reset_index(drop=True), quality_stats
 

@@ -35,11 +35,15 @@ Classification table columns
   Optional  : keywords, parent_code
 """
 import argparse
+import logging
 import sys
 
+from src.logging_utils import configure_logging
 from src.data_loader import load_asset_register, load_classification_table, write_templates
 from src.classifier import classify_all
 from src.report_generator import save_results, generate_summary, save_summary
+
+logger = logging.getLogger(__name__)
 
 SEP = "=" * 62
 
@@ -94,47 +98,65 @@ def build_parser() -> argparse.ArgumentParser:
             "skipping the fit step. Cache is invalidated when tables change."
         ),
     )
+
+    verbosity = p.add_mutually_exclusive_group()
+    verbosity.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Enable debug-level logging output.",
+    )
+    verbosity.add_argument(
+        "--quiet", "-q",
+        action="store_true",
+        help="Suppress all output except errors.",
+    )
+
     return p
 
 
 def main() -> int:
     args = build_parser().parse_args()
 
-    print(f"\n{SEP}")
-    print("  Asset Classification Integration Tool")
-    print(SEP)
+    if args.verbose:
+        verbosity = 2
+    elif args.quiet:
+        verbosity = 0
+    else:
+        verbosity = 1
+    configure_logging(verbosity)
+
+    logger.info(SEP)
+    logger.info("  Asset Classification Integration Tool")
+    logger.info(SEP)
 
     # ── Template generation mode ─────────────────────────────────────────────
     if args.generate_templates:
-        print(f"\nGenerating CSV templates → {args.output}/")
+        logger.info("Generating CSV templates → %s/", args.output)
         paths = write_templates(args.output)
-        print(f"  Asset register template  : {paths['asset_register']}")
-        print(f"  Classification template  : {paths['classification_table']}")
-        print(f"\n  Fill in the templates and run again with --assets and --classifications.")
-        print(SEP + "\n")
+        logger.info("  Asset register template  : %s", paths['asset_register'])
+        logger.info("  Classification template  : %s", paths['classification_table'])
+        logger.info("  Fill in the templates and run again with --assets and --classifications.")
         return 0
 
     # ── Validate required args for classification mode ────────────────────────
     if args.top_n < 1:
-        print("ERROR: --top-n must be at least 1.", file=sys.stderr)
+        logger.error("--top-n must be at least 1.")
         return 1
     if not args.assets:
-        print("ERROR: --assets is required (or use --generate-templates to create blank templates).",
-              file=sys.stderr)
+        logger.error("--assets is required (or use --generate-templates to create blank templates).")
         return 1
     if not args.classifications:
-        print("ERROR: --classifications is required (or use --generate-templates).",
-              file=sys.stderr)
+        logger.error("--classifications is required (or use --generate-templates).")
         return 1
 
     # ── Load asset register ──────────────────────────────────────────────────
-    print(f"\nLoading asset register  : {args.assets}")
+    logger.info("Loading asset register  : %s", args.assets)
     try:
         asset_df, data_quality = load_asset_register(args.assets)
     except Exception as exc:
-        print(f"ERROR loading asset register: {exc}", file=sys.stderr)
+        logger.error("Loading asset register failed: %s", exc)
         return 1
-    print(f"  {len(asset_df)} asset(s) loaded")
+    logger.info("  %d asset(s) loaded", len(asset_df))
 
     # ── Load classification tables ───────────────────────────────────────────
     classification_tables = {}
@@ -142,32 +164,33 @@ def main() -> int:
         try:
             system_name, cls_path = _parse_classification_arg(raw_arg)
         except argparse.ArgumentTypeError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
+            logger.error("%s", exc)
             return 1
-        print(f"\nLoading classification  : {system_name}  ({cls_path})")
+        logger.info("Loading classification  : %s  (%s)", system_name, cls_path)
         try:
             cdf = load_classification_table(cls_path, system_name)
         except Exception as exc:
-            print(f"ERROR loading '{system_name}': {exc}", file=sys.stderr)
+            logger.error("Loading '%s' failed: %s", system_name, exc)
             return 1
         classification_tables[system_name] = cdf
-        print(f"  {len(cdf)} classification entries loaded")
+        logger.info("  %d classification entries loaded", len(cdf))
 
     # ── Classify ─────────────────────────────────────────────────────────────
-    print(f"\n{SEP}")
+    logger.info(SEP)
     if args.mode == "ml":
-        print("  Running ML classification …")
-        print("  (embeddings + two-stage + cross-register + failure alignment)")
+        logger.info("  Running ML classification …")
+        logger.info("  (embeddings + two-stage + cross-register + failure alignment)")
     else:
-        print("  Running classification …")
-    print(SEP)
+        logger.info("  Running classification …")
+    logger.info(SEP)
+
     if args.mode == "ml":
         from src.classifier_ml import classify_all_ml
         results_df = classify_all_ml(asset_df, classification_tables, top_n=args.top_n)
     else:
         results_df = classify_all(asset_df, classification_tables, top_n=args.top_n,
                                   cache_dir=args.cache_dir)
-    print(f"\n  {len(results_df)} result records generated")
+    logger.info("  %d result records generated", len(results_df))
 
     # ── Save outputs ─────────────────────────────────────────────────────────
     result_paths = save_results(results_df, args.output)
@@ -176,30 +199,32 @@ def main() -> int:
     summary_paths = save_summary(summary, args.output)
 
     # ── Console summary ──────────────────────────────────────────────────────
-    print(f"\n{SEP}")
-    print("  SUMMARY")
-    print(SEP)
-    print(f"  Total assets processed       : {summary['total_assets_processed']}")
-    print(f"  Total records generated      : {summary['total_classification_records']}")
-    print(f"  Assets for manual review     : {summary['manual_review_count']}")
+    logger.info(SEP)
+    logger.info("  SUMMARY")
+    logger.info(SEP)
+    logger.info("  Total assets processed       : %s", summary['total_assets_processed'])
+    logger.info("  Total records generated      : %s", summary['total_classification_records'])
+    logger.info("  Assets for manual review     : %s", summary['manual_review_count'])
 
     for system, stats in summary["systems"].items():
-        print(f"\n  {system}:")
-        print(f"    Average top-1 score  : {stats['average_top_score']}")
-        print(f"    High / Med / Low     : {stats['high_confidence']} / {stats['medium_confidence']} / {stats['low_confidence']}")
+        logger.info("  %s:", system)
+        logger.info("    Average top-1 score  : %s", stats['average_top_score'])
+        logger.info("    High / Med / Low     : %s / %s / %s",
+                    stats['high_confidence'], stats['medium_confidence'], stats['low_confidence'])
 
     if "cross_system_consistency" in summary:
         cs = summary["cross_system_consistency"]
-        print(f"\n  Cross-system consistency : {cs['consistency_pct']}%  "
-              f"({cs['consistent_count']} consistent, {cs['inconsistent_count']} inconsistent)")
+        logger.info("  Cross-system consistency : %s%%  (%s consistent, %s inconsistent)",
+                    cs['consistency_pct'], cs['consistent_count'], cs['inconsistent_count'])
 
-    print(f"\n{SEP}")
-    print("  Output files:")
-    print(f"    Results   CSV   : {result_paths['csv']}")
-    print(f"    Results   Excel : {result_paths['excel']}")
-    print(f"    Summary   JSON  : {summary_paths['json']}")
-    print(f"    Summary   TXT   : {summary_paths['txt']}")
-    print(SEP + "\n")
+    logger.info(SEP)
+    logger.info("  Output files:")
+    logger.info("    Results   CSV   : %s", result_paths['csv'])
+    logger.info("    Results   Excel : %s", result_paths['excel'])
+    logger.info("    Summary   JSON  : %s", summary_paths['json'])
+    logger.info("    Summary   TXT   : %s", summary_paths['txt'])
+    logger.info(SEP)
+
     return 0
 
 

@@ -35,6 +35,8 @@ from .similarity_engine import (
     build_classification_text,
 )
 from .hierarchy import HierarchyIndex
+import logging
+
 from .ml_engine import (
     CrossRegisterIndex,
     EmbeddingEngine,
@@ -43,6 +45,8 @@ from .ml_engine import (
     TwoStageResult,
     _CODE_TO_DOMAIN,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +237,7 @@ def classify_all_ml(
     total = len(asset_df)
 
     # ── B: Fit per-system engines ────────────────────────────────────────────
-    print("  Fitting ML engines …")
+    logger.info("Fitting ML engines …")
     sim_engines:    Dict[str, SimilarityEngine]     = {}
     two_stage_clfs: Dict[str, TwoStageClassifier]   = {}
     system_matrices: Dict[str, np.ndarray]          = {}
@@ -300,7 +304,7 @@ def classify_all_ml(
     for i, (_, asset_row) in enumerate(asset_df.iterrows(), start=1):
         label = (asset_row.get("asset_name")
                  or asset_row.get("asset_id") or f"row {i}")
-        print(f"  [{i}/{total}] {label}")
+        logger.info("[%d/%d] %s", i, total, label)
         asset_text = all_asset_texts[i - 1]
 
         for system, eng in sim_engines.items():
