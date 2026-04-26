@@ -111,12 +111,13 @@ def _build_category_text(row: pd.Series) -> str:
 class SimilarityEngine:
     """Hybrid 3-component similarity engine.
 
-    Score = 0.50 × TF-IDF(full_text)  [Component A — semantic overlap]
-          + 0.25 × TF-IDF(category)   [Component B — domain hierarchy]
-          + 0.25 × Jaccard(keywords)  [Component C — term precision]
+    Score = w_A × TF-IDF(full_text)  [Component A — semantic overlap]
+          + w_B × TF-IDF(category)   [Component B — domain hierarchy]
+          + w_C × Jaccard(keywords)  [Component C — term precision]
 
-    score_batch() processes N assets in one vectorized pass — preferred for
-    large registers (50k+).  score_raw() remains available for single-asset use.
+    Default weights (fast mode): A=0.50, B=0.25, C=0.25.
+    Per-column domain-adaptive weights can be set via set_domain_weights().
+    score_batch() processes N assets in one vectorized pass.
     """
 
     def __init__(self) -> None:
@@ -135,6 +136,11 @@ class SimilarityEngine:
         # Precomputed binary term matrix for vectorized Jaccard (set at fit time)
         self._jaccard_vocab: list[str] = []
         self._jaccard_matrix: Optional[np.ndarray] = None  # (M, V_j) bool
+        # Per-column domain-adaptive weights (set by set_domain_weights; None = use defaults)
+        self._w_a: Optional[np.ndarray] = None
+        self._w_b: Optional[np.ndarray] = None
+        self._w_c: Optional[np.ndarray] = None
+        self._w_d: Optional[np.ndarray] = None
 
     def fit(
         self,
@@ -239,68 +245,94 @@ class SimilarityEngine:
         asset_term_sets = [_term_set(t) for t in asset_texts]
         c_mat = self._compute_jaccard_batch(asset_term_sets)
 
-        # Weighted hybrid
-        if self._cat_matrix is not None:
-            hybrid = (0.50 * a_mat + 0.25 * b_mat + 0.25 * c_mat)
+        # Weighted hybrid — use per-column domain weights when set, else defaults
+        if self._w_a is not None:
+            hybrid = a_mat * self._w_a + b_mat * self._w_b + c_mat * self._w_c
+        elif self._cat_matrix is not None:
+            hybrid = 0.50 * a_mat + 0.25 * b_mat + 0.25 * c_mat
         else:
-            hybrid = (0.625 * a_mat + 0.375 * c_mat)
+            hybrid = 0.625 * a_mat + 0.375 * c_mat
 
         return np.round(hybrid, 1), a_mat, b_mat, c_mat
 
-    def score_raw(
-        self, asset_text: str, top_n: int = 3
-    ) -> List[Tuple[int, float, float, float, float]]:
-        """Return uncalibrated (idx, hybrid, A, B, C) tuples for top-N matches.
+    def compute_ml_hybrid(
+        self,
+        a_arr: np.ndarray,
+        b_arr: np.ndarray,
+        c_arr: np.ndarray,
+        d_arr: np.ndarray,
+    ) -> np.ndarray:
+        """Combine A/B/C/D component arrays using ML-mode domain weights.
 
-        Scores are in 0–100 range before calibration.
-        For large-scale use, prefer score_batch() over calling this in a loop.
+        Uses per-column domain weights when set via set_domain_weights(mode='ml'),
+        otherwise falls back to the standard ML defaults (A=0.35, B=0.15, C=0.15, D=0.35).
         """
-        n = min(top_n, self._n_classes)
-        cleaned = _clean(asset_text)
+        if self._w_a is not None and self._w_d is not None:
+            return a_arr * self._w_a + b_arr * self._w_b + c_arr * self._w_c + d_arr * self._w_d
+        return 0.35 * a_arr + 0.15 * b_arr + 0.15 * c_arr + 0.35 * d_arr
 
-        if not cleaned or self._full_matrix is None:
-            return [(i, 0.0, 0.0, 0.0, 0.0) for i in range(n)]
+    def compute_ml_hybrid_no_embed(
+        self,
+        a_arr: np.ndarray,
+        b_arr: np.ndarray,
+        c_arr: np.ndarray,
+    ) -> np.ndarray:
+        """ML-mode fallback when embeddings are unavailable (D=0)."""
+        if self._w_a is not None:
+            # Redistribute D weight proportionally to A when embeddings absent
+            total = self._w_a + self._w_b + self._w_c
+            safe_total = np.where(total > 0, total, 1.0)
+            return (a_arr * self._w_a + b_arr * self._w_b + c_arr * self._w_c) / safe_total * 100 / 100
+        return 0.50 * a_arr + 0.25 * b_arr + 0.25 * c_arr
 
-        query_vec = self._full_vec.transform([cleaned])
-        if query_vec.nnz == 0:
-            return [(i, 0.0, 0.0, 0.0, 0.0) for i in range(n)]
+    def set_domain_weights(
+        self,
+        classification_codes: List[str],
+        code_to_domain: dict,
+        domain_weights_cfg: dict,
+        mode: str = "fast",
+    ) -> None:
+        """Pre-compute per-column weight vectors from config/domain_weights.yaml.
 
-        # Component A
-        raw_a = cosine_similarity(query_vec, self._full_matrix).flatten()
-        a_scores = np.nan_to_num(raw_a, nan=0.0) * 100
+        Each of the M classification columns gets its own A/B/C(/D) weight based
+        on the failure domain of that code, enabling domain-adaptive scoring.
+        Codes not in code_to_domain, or domains not in the overrides block, use
+        the global defaults from the YAML defaults section.
 
-        # Component B
-        if self._cat_matrix is not None:
-            try:
-                cat_vec = self._cat_vec.transform([cleaned])
-                raw_b = cosine_similarity(cat_vec, self._cat_matrix).flatten()
-                b_scores = np.nan_to_num(raw_b, nan=0.0) * 100
-            except Exception:
-                b_scores = np.zeros(self._n_classes)
+        Call after fit() and before score_batch() / compute_ml_hybrid().
+        """
+        defaults_cfg = domain_weights_cfg.get("defaults", {}).get(mode, {})
+        if mode == "ml":
+            w_a_def = float(defaults_cfg.get("A", 0.35))
+            w_b_def = float(defaults_cfg.get("B", 0.15))
+            w_c_def = float(defaults_cfg.get("C", 0.15))
+            w_d_def = float(defaults_cfg.get("D", 0.35))
         else:
-            b_scores = np.zeros(self._n_classes)
+            w_a_def = float(defaults_cfg.get("A", 0.50))
+            w_b_def = float(defaults_cfg.get("B", 0.25))
+            w_c_def = float(defaults_cfg.get("C", 0.25))
+            w_d_def = 0.0
 
-        # Component C
-        asset_terms = _term_set(asset_text)
-        c_scores = np.zeros(self._n_classes)
-        if asset_terms:
-            for i, cls_terms in enumerate(self._class_term_sets):
-                union = asset_terms | cls_terms
-                if union:
-                    c_scores[i] = len(asset_terms & cls_terms) / len(union) * 100
+        overrides = domain_weights_cfg.get("overrides", {})
+        M = self._n_classes
+        w_a = np.full(M, w_a_def, dtype=np.float32)
+        w_b = np.full(M, w_b_def, dtype=np.float32)
+        w_c = np.full(M, w_c_def, dtype=np.float32)
+        w_d = np.full(M, w_d_def, dtype=np.float32)
 
-        if self._cat_matrix is not None:
-            hybrid = 0.50 * a_scores + 0.25 * b_scores + 0.25 * c_scores
-        else:
-            hybrid = 0.625 * a_scores + 0.375 * c_scores
+        for j, code in enumerate(classification_codes[:M]):
+            domain = code_to_domain.get(str(code))
+            if not domain:
+                continue
+            ov = overrides.get(domain, {}).get(mode, {})
+            if not ov:
+                continue
+            w_a[j] = float(ov.get("A", w_a_def))
+            w_b[j] = float(ov.get("B", w_b_def))
+            w_c[j] = float(ov.get("C", w_c_def))
+            w_d[j] = float(ov.get("D", w_d_def))
 
-        hybrid = np.round(hybrid, 1)
-        top_idx = np.argsort(hybrid)[::-1][:n]
-        return [
-            (int(i), float(hybrid[i]), float(a_scores[i]), float(b_scores[i]), float(c_scores[i]))
-            for i in top_idx
-        ]
-
-    def score(self, asset_text: str, top_n: int = 3) -> List[Tuple[int, float]]:
-        """Backward-compatible interface returning (idx, hybrid_score) tuples."""
-        return [(idx, h) for idx, h, *_ in self.score_raw(asset_text, top_n)]
+        self._w_a = w_a
+        self._w_b = w_b
+        self._w_c = w_c
+        self._w_d = w_d

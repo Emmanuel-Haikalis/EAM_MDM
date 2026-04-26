@@ -45,6 +45,8 @@ from .ml_engine import (
     TwoStageResult,
     _CODE_TO_DOMAIN,
 )
+from .config_loader import load_config
+from .cache import FitCache
 
 logger = logging.getLogger(__name__)
 
@@ -220,19 +222,29 @@ def classify_all_ml(
     top_categories: int = 2,
     embedding_model_name: str = "all-MiniLM-L6-v2",
     equiv_threshold: float = 0.65,
+    cache_dir: Optional[str] = None,
 ) -> pd.DataFrame:
     """Two-pass ML classification with embeddings, two-stage filtering,
     cross-register equivalence, failure-mode alignment, and hierarchy enrichment.
 
     Falls back gracefully to TF-IDF weights if sentence-transformers is absent.
     Uses batch embedding encoding for efficiency on large registers.
+    Pass cache_dir to persist fitted matrices and skip re-fitting on repeat runs.
     """
     if asset_df.empty:
         return pd.DataFrame()
+    if not classification_tables:
+        return pd.DataFrame()
+
+    empty_systems = [s for s, cdf in classification_tables.items() if cdf.empty]
+    if empty_systems:
+        raise ValueError(f"Classification table(s) are empty: {empty_systems}")
 
     # ── A: Create shared engines ─────────────────────────────────────────────
     embedding_engine = EmbeddingEngine(embedding_model_name)
     failure_engine   = FailureModeEngine()
+    domain_weights_cfg = load_config("domain_weights")
+    cache = FitCache(cache_dir)
 
     total = len(asset_df)
 
@@ -250,6 +262,8 @@ def classify_all_ml(
         hi = HierarchyIndex()
         hi.build(cdf)
         hierarchy_indices[system] = hi
+
+        codes = cdf["classification_code"].astype(str).tolist()
 
         # Base texts: hierarchy-enriched (inherits ancestor vocab when parent_code present)
         hier_texts = hi.enrich_texts(cdf)
@@ -272,11 +286,21 @@ def classify_all_ml(
             for _, row in cdf.iterrows()
         ]
 
-        eng = SimilarityEngine()
-        eng.fit(enriched_full, category_texts=cat_texts)
+        cached_eng = cache.load_tfidf(system, cdf)
+        if cached_eng is not None:
+            eng = cached_eng
+        else:
+            eng = SimilarityEngine()
+            eng.fit(enriched_full, category_texts=cat_texts)
+            if domain_weights_cfg:
+                eng.set_domain_weights(codes, _CODE_TO_DOMAIN, domain_weights_cfg, mode="ml")
+            cache.save_tfidf(system, cdf, eng)
         sim_engines[system] = eng
 
-        sys_matrix = embedding_engine.fit(enriched_full)
+        sys_matrix = cache.load_embed(system, cdf)
+        if sys_matrix is None:
+            sys_matrix = embedding_engine.fit(enriched_full)
+            cache.save_embed(system, cdf, sys_matrix)
         system_matrices[system] = sys_matrix
 
         ts = TwoStageClassifier(embedding_engine)
@@ -317,19 +341,14 @@ def classify_all_ml(
             b_arr      = b_mat[0]
             c_arr      = c_mat[0]
 
-            # Component D — embedding cosine
+            # Component D — embedding cosine; combine via domain-adaptive weights
             if all_asset_embs is not None:
                 asset_emb = all_asset_embs[i - 1:i]  # (1, D) — pre-encoded
-                d_arr = (asset_emb @ system_matrices[system].T).flatten() * 100
-                hybrid_ml = (
-                    0.35 * a_arr
-                    + 0.15 * b_arr
-                    + 0.15 * c_arr
-                    + 0.35 * d_arr
-                )
+                d_arr    = (asset_emb @ system_matrices[system].T).flatten() * 100
+                hybrid_ml = eng.compute_ml_hybrid(a_arr, b_arr, c_arr, d_arr)
             else:
                 d_arr     = np.zeros(n_cls)
-                hybrid_ml = 0.50 * a_arr + 0.25 * b_arr + 0.25 * c_arr
+                hybrid_ml = eng.compute_ml_hybrid_no_embed(a_arr, b_arr, c_arr)
 
             raw_ml[system][i] = (hybrid_ml, a_arr, b_arr, c_arr, d_arr)
 

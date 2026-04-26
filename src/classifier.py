@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .similarity_engine import SimilarityEngine, build_asset_text, build_classification_text, _clean, _STOP_WORDS
 from .hierarchy import HierarchyIndex
+from .config_loader import load_config
 
 logger = logging.getLogger(__name__)
 
@@ -231,11 +232,19 @@ def classify_all(
     """
     if asset_df.empty:
         return pd.DataFrame()
+    if not classification_tables:
+        return pd.DataFrame()
+
+    empty_systems = [s for s, cdf in classification_tables.items() if cdf.empty]
+    if empty_systems:
+        raise ValueError(f"Classification table(s) are empty: {empty_systems}")
 
     try:
         from .ml_engine import _CODE_TO_DOMAIN as code_to_domain
     except ImportError:
         code_to_domain = {}
+
+    domain_weights_cfg = load_config("domain_weights")
 
     from .cache import FitCache
     cache = FitCache(cache_dir)
@@ -265,6 +274,9 @@ def classify_all(
         ]
         eng = SimilarityEngine()
         eng.fit(full_texts, category_texts=cat_texts)
+        if domain_weights_cfg:
+            codes = cdf["classification_code"].astype(str).tolist()
+            eng.set_domain_weights(codes, code_to_domain, domain_weights_cfg, mode="fast")
         cache.save_tfidf(system, cdf, eng)
         engines[system] = eng
 

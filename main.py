@@ -186,7 +186,10 @@ def main() -> int:
 
     if args.mode == "ml":
         from src.classifier_ml import classify_all_ml
-        results_df = classify_all_ml(asset_df, classification_tables, top_n=args.top_n)
+        results_df = classify_all_ml(
+            asset_df, classification_tables,
+            top_n=args.top_n, cache_dir=args.cache_dir,
+        )
     else:
         results_df = classify_all(asset_df, classification_tables, top_n=args.top_n,
                                   cache_dir=args.cache_dir)
